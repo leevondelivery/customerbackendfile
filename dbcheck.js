@@ -7,7 +7,7 @@ async function check() {
     await mongoose.connect(MONGODB_URI);
     console.log("Connected to MongoDB Atlas");
     
-    // Check one document from orderreviews
+    
     const reviewsCol = mongoose.connection.db.collection('orderreviews');
     const sampleReview = await reviewsCol.findOne({});
     console.log("Sample Review:", JSON.stringify(sampleReview, null, 2));
