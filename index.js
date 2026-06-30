@@ -82,6 +82,38 @@ app.get('/restaurants', async (req, res) => {
   }
 });
 
+// GET /carousel Endpoint
+app.get('/carousel', async (req, res) => {
+  try {
+    const carouselCollection = mongoose.connection.db.collection('carousel');
+    const items = await carouselCollection.find({}).toArray();
+
+    // Map AWS S3 URLs to CloudFront CDN
+    const mappedItems = items.map(item => {
+      if (item.imageUrl) {
+        let url = item.imageUrl;
+        // Replace:
+        // https://my-restaurant-buckets.s3.eu-north-1.amazonaws.com
+        // with:
+        // https://d3op3va0hb427u.cloudfront.net
+        url = url.replace(/https:\/\/my-restaurant-buckets\.s3\.[a-z0-9-]+\.amazonaws\.com/i, 'https://d3op3va0hb427u.cloudfront.net');
+        url = url.replace('my-restaurant-buckets.s3.eu-north-1.amazonaws.com', 'd3op3va0hb427u.cloudfront.net');
+        return {
+          ...item,
+          imageUrl: url
+        };
+      }
+      return item;
+    });
+
+    return res.status(200).json({ success: true, carousel: mappedItems });
+  } catch (err) {
+    console.error("Get carousel error:", err);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
+
 // GET /orders/completed/:userId Endpoint
 app.get('/orders/completed/:userId', async (req, res) => {
   const { userId } = req.params;
