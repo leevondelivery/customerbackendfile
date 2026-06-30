@@ -216,44 +216,16 @@ app.get('/orderstatus/user/:userid', async (req, res) => {
       query.$or.push({ userId: new mongoose.Types.ObjectId(userid) });
     }
 
-    const activeCols = ['acceptedorders', 'acceptedbyrestorents', 'orders'];
-    const finishedCols = ['finalcompletedorders', 'rejectedorders', 'paymentfailedorders'];
-    const allCols = [...activeCols, ...finishedCols];
+    const orderStatusesCollection = mongoose.connection.db.collection('orderstatuses');
+    
+    // Query orderstatuses for the latest document matching the user
+    const latestStatus = await orderStatusesCollection
+      .find(query)
+      .sort({ orderDate: -1, createdAt: -1 })
+      .limit(1)
+      .next();
 
-    let latestOrder = null;
-    let latestColName = null;
-
-    const getDocDate = (doc) => {
-      if (doc.orderDate) return new Date(doc.orderDate);
-      if (doc.createdAt) return new Date(doc.createdAt);
-      if (doc._id && doc._id.getTimestamp) return doc._id.getTimestamp();
-      return new Date(0);
-    };
-
-    for (const colName of allCols) {
-      const doc = await mongoose.connection.db.collection(colName)
-        .find(query)
-        .sort({ orderDate: -1 })
-        .limit(1)
-        .next();
-
-      if (doc) {
-        const docDate = getDocDate(doc);
-        const latestDate = latestOrder ? getDocDate(latestOrder) : new Date(0);
-        if (!latestOrder || docDate > latestDate) {
-          latestOrder = doc;
-          latestColName = colName;
-        }
-      }
-    }
-
-    // If the latest order is in an active collection, return it.
-    // Otherwise, return null (meaning no active order).
-    if (latestOrder && activeCols.includes(latestColName)) {
-      return res.status(200).json({ success: true, orderStatus: latestOrder });
-    }
-
-    return res.status(200).json({ success: true, orderStatus: null });
+    return res.status(200).json({ success: true, orderStatus: latestStatus || null });
 
   } catch (err) {
     console.error("Get order status error:", err);
