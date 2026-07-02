@@ -71,11 +71,35 @@ const restaurantSchema = new mongoose.Schema({
 
 const Restaurant = mongoose.model('Restaurant', restaurantSchema, 'restuarentusers');
 
+let cachedRestaurants = null;
+let cacheExpiryTime = 0;
+const CACHE_DURATION_MS = 10000; // 10 seconds cache duration
+
 // GET /restaurants Endpoint
 app.get('/restaurants', async (req, res) => {
   try {
+    const now = Date.now();
+    if (cachedRestaurants && now < cacheExpiryTime) {
+      return res.status(200).json({ success: true, restaurants: cachedRestaurants });
+    }
+
     const restaurants = await Restaurant.find({}).lean();
-    return res.status(200).json({ success: true, restaurants });
+    
+    // Map AWS S3 URLs to CloudFront CDN for restaurant logo URLs
+    const mappedRestaurants = restaurants.map(rest => {
+      if (rest.logoUrl) {
+        let url = rest.logoUrl;
+        url = url.replace(/https:\/\/my-restaurant-buckets\.s3\.[a-z0-9-]+\.amazonaws\.com/i, 'https://d3op3va0hb427u.cloudfront.net');
+        url = url.replace('my-restaurant-buckets.s3.eu-north-1.amazonaws.com', 'd3op3va0hb427u.cloudfront.net');
+        return { ...rest, logoUrl: url };
+      }
+      return rest;
+    });
+
+    cachedRestaurants = mappedRestaurants;
+    cacheExpiryTime = now + CACHE_DURATION_MS;
+
+    return res.status(200).json({ success: true, restaurants: mappedRestaurants });
   } catch (err) {
     console.error("Get restaurants error:", err);
     return res.status(500).json({ success: false, message: "Internal server error" });
@@ -264,6 +288,63 @@ app.get('/orderstatus/user/:userid', async (req, res) => {
     return res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
+
+// In-memory cache for mapping restaurantId -> collectionName in the 'restuarents' database
+let restaurantIdToCollectionMap = {};
+
+// GET /restaurants/:restaurantId/menu Endpoint
+app.get('/restaurants/:restaurantId/menu', async (req, res) => {
+  const { restaurantId } = req.params;
+
+  if (!restaurantId) {
+    return res.status(400).json({ success: false, message: "Restaurant ID is required" });
+  }
+
+  try {
+    const db = mongoose.connection.client.db('restuarents');
+    let collectionName = restaurantIdToCollectionMap[restaurantId];
+
+    if (!collectionName) {
+      const collections = await db.listCollections().toArray();
+      for (const colInfo of collections) {
+        const col = db.collection(colInfo.name);
+        const doc = await col.findOne({ restaurantId });
+        if (doc) {
+          collectionName = colInfo.name;
+          restaurantIdToCollectionMap[restaurantId] = collectionName;
+          break;
+        }
+      }
+    }
+
+    if (!collectionName) {
+      console.log(`[GET /restaurants/${restaurantId}/menu] No collection found for restaurantId`);
+      return res.status(200).json({ success: true, items: [] });
+    }
+
+    const itemsCol = db.collection(collectionName);
+    const rawItems = await itemsCol.find({}).toArray();
+
+    // Map AWS S3 URLs to CloudFront CDN for items' photo URLs
+    const items = rawItems.map(item => {
+      if (item.photoUrl) {
+        let url = item.photoUrl;
+        url = url.replace(/https:\/\/my-restaurant-buckets\.s3\.[a-z0-9-]+\.amazonaws\.com/i, 'https://d3op3va0hb427u.cloudfront.net');
+        url = url.replace('my-restaurant-buckets.s3.eu-north-1.amazonaws.com', 'd3op3va0hb427u.cloudfront.net');
+        return { ...item, photoUrl: url };
+      }
+      return item;
+    });
+
+    console.log(`[GET /restaurants/${restaurantId}/menu] Found collection '${collectionName}' with ${items.length} items`);
+    return res.status(200).json({ success: true, items });
+
+  } catch (err) {
+    console.error("Get restaurant menu error:", err);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
 
 // Start Server
 app.listen(PORT, () => {
