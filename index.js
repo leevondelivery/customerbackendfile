@@ -84,7 +84,7 @@ app.get('/restaurants', async (req, res) => {
     }
 
     const restaurants = await Restaurant.find({}).lean();
-    
+
     // Map AWS S3 URLs to CloudFront CDN for restaurant logo URLs
     const mappedRestaurants = restaurants.map(rest => {
       if (rest.logoUrl) {
@@ -273,7 +273,7 @@ app.get('/orderstatus/user/:userid', async (req, res) => {
     }
 
     const orderStatusesCollection = mongoose.connection.db.collection('orderstatuses');
-    
+
     // Query orderstatuses for the latest document matching the user
     const latestStatus = await orderStatusesCollection
       .find(query)
