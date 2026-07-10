@@ -3,8 +3,33 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const Razorpay = require('razorpay');
+const admin = require('firebase-admin');
+const { getAuth } = require('firebase-admin/auth');
+const path = require('path');
+const fs = require('fs');
 
 const app = express();
+
+// Initialize Firebase Admin SDK
+let firebaseApp = null;
+try {
+  const serviceAccountPath = path.join(__dirname, 'firebase-service-account.json');
+  if (fs.existsSync(serviceAccountPath)) {
+    const serviceAccount = require(serviceAccountPath);
+    if (serviceAccount.private_key && serviceAccount.private_key.includes('BEGIN PRIVATE KEY')) {
+      firebaseApp = admin.initializeApp({
+        credential: admin.cert(serviceAccount)
+      });
+      console.log('Firebase Admin SDK initialized successfully.');
+    } else {
+      console.warn('Firebase Service Account key exists but private_key is not configured.');
+    }
+  } else {
+    console.warn('firebase-service-account.json not found. Firebase verification is disabled.');
+  }
+} catch (err) {
+  console.error('Failed to initialize Firebase Admin SDK:', err);
+}
 
 // Initialize Razorpay with fallback test keys
 const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || 'rzp_test_T96hBRy748HTkq';
@@ -40,10 +65,11 @@ mongoose.connect(MONGODB_URI)
 
 // User Model (explicitly map to the 'users' collection)
 const userSchema = new mongoose.Schema({
-  phone: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
+  phone: { type: String, unique: true, sparse: true },
+  password: { type: String },
   name: { type: String },
-  email: { type: String }
+  email: { type: String },
+  savedAddresses: { type: Array, default: [] }
 }, { strict: false });
 
 const User = mongoose.model('User', userSchema, 'users');
@@ -77,6 +103,65 @@ app.post('/login', async (req, res) => {
   } catch (err) {
     console.error("Login route error:", err);
     return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
+// Google Login Endpoint
+app.post('/login/google', async (req, res) => {
+  const { idToken } = req.body;
+
+  if (!idToken) {
+    return res.status(400).json({ success: false, message: "Firebase idToken is required" });
+  }
+
+  if (!firebaseApp) {
+    console.error('[Firebase Admin] Firebase is not initialized.');
+    return res.status(503).json({
+      success: false,
+      message: "Google login is currently unavailable. Firebase service account is not configured."
+    });
+  }
+
+  try {
+    const decodedToken = await getAuth().verifyIdToken(idToken);
+    const { email, name, uid } = decodedToken;
+
+    if (!email) {
+      return res.status(400).json({ success: false, message: "Email not provided by Google account" });
+    }
+
+    let user = await User.findOne({ email }).lean();
+
+    if (!user) {
+      // Register user in MongoDB (omit phone & password initially)
+      const newUser = new User({
+        email,
+        name: name || email.split('@')[0],
+        isPhoneVerified: false,
+        firebaseUid: uid,
+        savedAddresses: []
+      });
+      user = await newUser.save();
+      console.log(`[Google Signup] Registered new MongoDB user: ${email}`);
+    } else {
+      if (!user.firebaseUid) {
+        await User.updateOne({ email }, { $set: { firebaseUid: uid } });
+        user.firebaseUid = uid;
+      }
+      console.log(`[Google Login] Signed in user: ${email}`);
+    }
+
+    const { password: _, ...userData } = user;
+
+    return res.status(200).json({
+      success: true,
+      message: "Google login successful",
+      user: userData
+    });
+
+  } catch (err) {
+    console.error("Google login route error:", err);
+    return res.status(401).json({ success: false, message: "Invalid or expired Google Token" });
   }
 });
 
@@ -320,7 +405,7 @@ app.get('/reviews/user/:userId', async (req, res) => {
 
 // PUT /user/update Endpoint
 app.put('/user/update', async (req, res) => {
-  const { userid, email, dateOfBirth } = req.body;
+  const { userid, email, dateOfBirth, phone, isPhoneVerified } = req.body;
 
   if (!userid) {
     return res.status(400).json({ success: false, message: "User ID is required" });
@@ -331,6 +416,12 @@ app.put('/user/update', async (req, res) => {
     if (email !== undefined) updateFields.email = email;
     if (dateOfBirth !== undefined) {
       updateFields.dateOfBirth = dateOfBirth ? new Date(dateOfBirth) : null;
+    }
+    if (phone !== undefined) {
+      updateFields.phone = phone;
+    }
+    if (isPhoneVerified !== undefined) {
+      updateFields.isPhoneVerified = isPhoneVerified;
     }
 
     const updatedUser = await User.findByIdAndUpdate(
@@ -353,6 +444,9 @@ app.put('/user/update', async (req, res) => {
     });
   } catch (err) {
     console.error("Update profile error:", err);
+    if (err.code === 11000) {
+      return res.status(400).json({ success: false, message: "This phone number is already linked to another account." });
+    }
     return res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
@@ -414,7 +508,7 @@ app.get('/user/:userid/addresses', async (req, res) => {
 // POST /user/:userid/addresses Endpoint
 app.post('/user/:userid/addresses', async (req, res) => {
   const { userid } = req.params;
-  const { flatNo, street, landmark, tag } = req.body;
+  const { flatNo, street, landmark, tag, lat, lng } = req.body;
   if (!userid) {
     return res.status(400).json({ success: false, message: "User ID is required" });
   }
@@ -433,8 +527,11 @@ app.post('/user/:userid/addresses', async (req, res) => {
       flatNo,
       street,
       landmark,
-      tag, // 'Home', 'Office', 'Apartment', 'Other'
-      label: tag, // support database compatibility
+      tag: tag || 'Home', // 'Home', 'Office', 'Apartment', 'Other'
+      label: tag || 'Home', // support database compatibility
+      lat: lat ? Number(lat) : null,
+      lng: lng ? Number(lng) : null,
+      url: (lat && lng) ? `https://www.google.com/maps/search/?api=1&query=${lat},${lng}` : "",
     };
     user.savedAddresses.push(newAddress);
     user.markModified('savedAddresses');
@@ -552,6 +649,16 @@ app.post('/payment/order', async (req, res) => {
     return res.status(400).json({ success: false, message: "Amount is required" });
   }
   try {
+    if (userId) {
+      const orderStatusesCollection = mongoose.connection.db.collection('orderstatuses');
+      const activeOrder = await orderStatusesCollection.findOne({ userId: String(userId) });
+      if (activeOrder) {
+        return res.status(400).json({
+          success: false,
+          message: "You already have an active order in progress. Please wait for it to complete."
+        });
+      }
+    }
     const options = {
       amount: Math.round(amount * 100), // amount in paise
       currency: "INR",
@@ -589,7 +696,10 @@ app.post('/payment/verify', async (req, res) => {
     userName,
     userEmail,
     userPhone,
-    deliveryAddressInfo
+    deliveryAddressInfo,
+    userCoordinates,
+    deliveryDistance,
+    deliveryFee
   } = req.body;
 
   if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
@@ -656,12 +766,16 @@ app.post('/payment/verify', async (req, res) => {
       userName: userName || '',
       userEmail: userEmail || '',
       userPhone: userPhone || '',
+      isPhoneVerified: req.body.isPhoneVerified !== undefined ? req.body.isPhoneVerified : true,
       flatNo: deliveryAddressInfo?.flatNo || '',
       street: deliveryAddressInfo?.street || '',
       landmark: deliveryAddressInfo?.landmark || '',
       deliveryAddress: `${deliveryAddressInfo?.flatNo || ''}, ${deliveryAddressInfo?.street || ''}${deliveryAddressInfo?.landmark ? ' , ' + deliveryAddressInfo.landmark : ''}`,
       restaurantId: String(restaurantId || cartItems[0]?.restId || ''),
       restaurantName: restaurantName || cartItems[0]?.restaurantName || '',
+      userCoordinates: userCoordinates || null,
+      deliveryDistance: deliveryDistance || null,
+      deliveryFee: Number(deliveryFee || 0),
       aa: "gg",
       orderDate: new Date(),
       __v: 0
@@ -676,6 +790,45 @@ app.post('/payment/verify', async (req, res) => {
     };
     await orderStatusesCollection.insertOne(statusDocument);
 
+    // Auto-save delivery address to user's savedAddresses if it's new and not a duplicate
+    if (userId && deliveryAddressInfo && deliveryAddressInfo.flatNo && deliveryAddressInfo.street) {
+      try {
+        const user = await User.findById(userId);
+        if (user) {
+          if (!user.savedAddresses) user.savedAddresses = [];
+          const isDuplicate = user.savedAddresses.some(addr => {
+            const existingFlat = (addr.flatNo || '').toLowerCase().trim();
+            const existingStreet = (addr.street || '').toLowerCase().trim();
+            const newFlat = String(deliveryAddressInfo.flatNo).toLowerCase().trim();
+            const newStreet = String(deliveryAddressInfo.street).toLowerCase().trim();
+            return existingFlat === newFlat && existingStreet === newStreet;
+          });
+          if (!isDuplicate) {
+            const addressId = new mongoose.Types.ObjectId().toString();
+            const latVal = userCoordinates ? userCoordinates.lat : null;
+            const lngVal = userCoordinates ? userCoordinates.lng : null;
+            user.savedAddresses.push({
+              _id: addressId,
+              id: addressId,
+              flatNo: deliveryAddressInfo.flatNo,
+              street: deliveryAddressInfo.street,
+              landmark: deliveryAddressInfo.landmark || '',
+              tag: deliveryAddressInfo.tag || 'Home',
+              label: deliveryAddressInfo.tag || 'Home',
+              lat: latVal ? Number(latVal) : null,
+              lng: lngVal ? Number(lngVal) : null,
+              url: (latVal && lngVal) ? `https://www.google.com/maps/search/?api=1&query=${latVal},${lngVal}` : "",
+            });
+            user.markModified('savedAddresses');
+            await user.save();
+            console.log(`[Verify] Auto-saved new address for user ${userId}`);
+          }
+        }
+      } catch (saveErr) {
+        console.error("Auto-save address error during payment verify:", saveErr);
+      }
+    }
+
     return res.status(200).json({
       success: true,
       message: "Payment verified and order placed successfully!",
@@ -684,6 +837,107 @@ app.post('/payment/verify', async (req, res) => {
   } catch (err) {
     console.error("Verify payment and place order error:", err);
     return res.status(500).json({ success: false, message: "Internal server error during order placement", error: err.message });
+  }
+});
+
+const https = require('https');
+
+const fetchRoutesDistance = (originLat, originLng, destLat, destLng, apiKey) => {
+  return new Promise((resolve, reject) => {
+    const postData = JSON.stringify({
+      origin: {
+        location: {
+          latLng: {
+            latitude: parseFloat(originLat),
+            longitude: parseFloat(originLng)
+          }
+        }
+      },
+      destination: {
+        location: {
+          latLng: {
+            latitude: parseFloat(destLat),
+            longitude: parseFloat(destLng)
+          }
+        }
+      },
+      travelMode: "TWO_WHEELER",
+      routingPreference: "TRAFFIC_UNAWARE"
+    });
+
+    const options = {
+      hostname: 'routes.googleapis.com',
+      port: 443,
+      path: '/directions/v2:computeRoutes',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': apiKey,
+        'X-Goog-FieldMask': 'routes.distanceMeters,routes.duration'
+      }
+    };
+
+    const req = https.request(options, (res) => {
+      let body = '';
+      res.on('data', (chunk) => body += chunk);
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(body);
+          resolve(parsed);
+        } catch (e) {
+          reject(e);
+        }
+      });
+    });
+
+    req.on('error', (err) => reject(err));
+    req.write(postData);
+    req.end();
+  });
+};
+
+app.get('/distance', async (req, res) => {
+  const { originLat, originLng, restaurantId } = req.query;
+
+  if (!originLat || !originLng || !restaurantId) {
+    return res.status(400).json({ success: false, message: "Missing origin coordinates or restaurantId" });
+  }
+
+  try {
+    const restaurant = await Restaurant.findOne({
+      $or: [
+        { restId: restaurantId },
+        { _id: mongoose.Types.ObjectId.isValid(restaurantId) ? new mongoose.Types.ObjectId(restaurantId) : restaurantId }
+      ]
+    }).lean();
+
+    if (!restaurant) {
+      return res.status(404).json({ success: false, message: "Restaurant not found" });
+    }
+
+    const restLocation = restaurant.restaurantLocation;
+    if (!restLocation || restLocation.lat === undefined || restLocation.lng === undefined) {
+      return res.status(400).json({ success: false, message: "Restaurant location coordinates not set in DB" });
+    }
+
+    const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ success: false, message: "Google Maps API Key is not configured on backend" });
+    }
+
+    const result = await fetchRoutesDistance(originLat, originLng, restLocation.lat, restLocation.lng, apiKey);
+
+    if (result && result.routes && result.routes[0]) {
+      const distanceMeters = result.routes[0].distanceMeters;
+      const distanceValKm = (distanceMeters / 1000).toFixed(1);
+      return res.status(200).json({ success: true, distance: `${distanceValKm} km`, km: distanceValKm });
+    } else {
+      console.warn("Routes API returned empty or error response:", result);
+      return res.status(400).json({ success: false, message: "Could not calculate road distance" });
+    }
+  } catch (err) {
+    console.error("Distance calculation error:", err);
+    return res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 
