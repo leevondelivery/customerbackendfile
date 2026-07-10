@@ -13,19 +13,26 @@ const app = express();
 // Initialize Firebase Admin SDK
 let firebaseApp = null;
 try {
+  let serviceAccount = null;
   const serviceAccountPath = path.join(__dirname, 'firebase-service-account.json');
+  
   if (fs.existsSync(serviceAccountPath)) {
-    const serviceAccount = require(serviceAccountPath);
-    if (serviceAccount.private_key && serviceAccount.private_key.includes('BEGIN PRIVATE KEY')) {
-      firebaseApp = admin.initializeApp({
-        credential: admin.cert(serviceAccount)
-      });
-      console.log('Firebase Admin SDK initialized successfully.');
-    } else {
-      console.warn('Firebase Service Account key exists but private_key is not configured.');
+    serviceAccount = require(serviceAccountPath);
+  } else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    try {
+      serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    } catch (parseErr) {
+      console.error('Failed to parse FIREBASE_SERVICE_ACCOUNT environment variable:', parseErr);
     }
+  }
+
+  if (serviceAccount && serviceAccount.private_key && serviceAccount.private_key.includes('BEGIN PRIVATE KEY')) {
+    firebaseApp = admin.initializeApp({
+      credential: admin.cert(serviceAccount)
+    });
+    console.log('Firebase Admin SDK initialized successfully.');
   } else {
-    console.warn('firebase-service-account.json not found. Firebase verification is disabled.');
+    console.warn('Firebase Service Account key not found or not configured. Google login will be disabled.');
   }
 } catch (err) {
   console.error('Failed to initialize Firebase Admin SDK:', err);
