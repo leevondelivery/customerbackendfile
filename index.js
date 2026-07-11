@@ -458,6 +458,26 @@ app.put('/user/update', async (req, res) => {
   }
 });
 
+// GET /user/:userid Endpoint - Fetch user profile details
+app.get('/user/:userid', async (req, res) => {
+  const { userid } = req.params;
+  if (!userid) {
+    return res.status(400).json({ success: false, message: "User ID is required" });
+  }
+  try {
+    const user = await User.findById(userid).lean();
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+    // Exclude password
+    const { password: _, ...userData } = user;
+    return res.status(200).json({ success: true, user: userData });
+  } catch (err) {
+    console.error("Get user profile error:", err);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
 // GET /orderstatus/user/:userid Endpoint
 app.get('/orderstatus/user/:userid', async (req, res) => {
   const { userid } = req.params;
