@@ -82,6 +82,17 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model('User', userSchema, 'users');
 
+// Fees Configuration Schema and Model
+const feesConfigSchema = new mongoose.Schema({
+  key: { type: String, default: 'global' },
+  deliveryFeeBase: { type: Number, default: 20 },
+  deliveryFeePerKm: { type: Number, default: 10 },
+  surgeFee: { type: Number, default: 0 },
+  isSurgeActive: { type: Boolean, default: false }
+}, { strict: false });
+
+const FeesConfig = mongoose.model('FeesConfig', feesConfigSchema, 'feesconfigs');
+
 // Login Endpoint
 app.post('/login', async (req, res) => {
   const { phone, password } = req.body;
@@ -1071,6 +1082,26 @@ app.get('/distance', async (req, res) => {
     }
   } catch (err) {
     console.error("Distance calculation error:", err);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
+// GET /fees-config endpoint
+app.get('/fees-config', async (req, res) => {
+  try {
+    let config = await FeesConfig.findOne({ key: 'global' }).lean();
+    if (!config) {
+      config = {
+        key: 'global',
+        deliveryFeeBase: 20,
+        deliveryFeePerKm: 10,
+        surgeFee: 0,
+        isSurgeActive: false
+      };
+    }
+    return res.status(200).json({ success: true, config });
+  } catch (err) {
+    console.error("Get fees config error:", err);
     return res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
