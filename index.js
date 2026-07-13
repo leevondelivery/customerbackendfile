@@ -76,6 +76,7 @@ const userSchema = new mongoose.Schema({
   password: { type: String },
   name: { type: String },
   email: { type: String },
+  securityAnswer: { type: String },
   savedAddresses: { type: Array, default: [] }
 }, { strict: false });
 
@@ -115,10 +116,10 @@ app.post('/login', async (req, res) => {
 
 // Signup Endpoint
 app.post('/signup', async (req, res) => {
-  const { phone, password, name } = req.body;
+  const { phone, password, name, securityAnswer } = req.body;
 
-  if (!phone || !password || !name) {
-    return res.status(400).json({ success: false, message: "Phone, password, and name are required" });
+  if (!phone || !password || !name || !securityAnswer) {
+    return res.status(400).json({ success: false, message: "Phone, password, name, and security answer are required" });
   }
 
   try {
@@ -134,6 +135,7 @@ app.post('/signup', async (req, res) => {
       name,
       email: 'N/A',
       isPhoneVerified: false,
+      securityAnswer: securityAnswer.trim().toLowerCase(),
       savedAddresses: []
     });
 
@@ -150,6 +152,70 @@ app.post('/signup', async (req, res) => {
     });
   } catch (err) {
     console.error("Signup route error:", err);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
+// Forgot Password Verify Endpoint
+app.post('/forgot-password/verify', async (req, res) => {
+  const { phone, securityAnswer } = req.body;
+
+  if (!phone || !securityAnswer) {
+    return res.status(400).json({ success: false, message: "Phone and security answer are required" });
+  }
+
+  try {
+    const user = await User.findOne({ phone }).lean();
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    if (!user.securityAnswer) {
+      return res.status(400).json({ success: false, message: "No security answer configured for this user. Please contact support." });
+    }
+
+    if (user.securityAnswer !== securityAnswer.trim().toLowerCase()) {
+      return res.status(400).json({ success: false, message: "Incorrect answer to security question" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Security answer verified successfully"
+    });
+  } catch (err) {
+    console.error("Forgot password verify error:", err);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
+// Forgot Password Reset Endpoint
+app.post('/forgot-password/reset', async (req, res) => {
+  const { phone, securityAnswer, newPassword } = req.body;
+
+  if (!phone || !securityAnswer || !newPassword) {
+    return res.status(400).json({ success: false, message: "Phone, security answer, and new password are required" });
+  }
+
+  try {
+    const user = await User.findOne({ phone });
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    if (!user.securityAnswer || user.securityAnswer !== securityAnswer.trim().toLowerCase()) {
+      return res.status(400).json({ success: false, message: "Security answer verification failed" });
+    }
+
+    // Update password
+    user.password = newPassword;
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Password reset successful"
+    });
+  } catch (err) {
+    console.error("Forgot password reset error:", err);
     return res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
