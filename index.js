@@ -113,6 +113,47 @@ app.post('/login', async (req, res) => {
   }
 });
 
+// Signup Endpoint
+app.post('/signup', async (req, res) => {
+  const { phone, password, name } = req.body;
+
+  if (!phone || !password || !name) {
+    return res.status(400).json({ success: false, message: "Phone, password, and name are required" });
+  }
+
+  try {
+    // Check if phone number already exists
+    const existingUser = await User.findOne({ phone }).lean();
+    if (existingUser) {
+      return res.status(400).json({ success: false, message: "An account with this phone number already exists" });
+    }
+
+    const newUser = new User({
+      phone,
+      password, // Plaintext to match the existing login logic
+      name,
+      email: 'N/A',
+      isPhoneVerified: false,
+      savedAddresses: []
+    });
+
+    const savedUser = await newUser.save();
+    
+    // Exclude password from response
+    const userObj = savedUser.toObject();
+    const { password: _, ...userData } = userObj;
+
+    return res.status(201).json({
+      success: true,
+      message: "Signup successful",
+      user: userData
+    });
+  } catch (err) {
+    console.error("Signup route error:", err);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
 // Google Login Endpoint
 app.post('/login/google', async (req, res) => {
   const { idToken } = req.body;
