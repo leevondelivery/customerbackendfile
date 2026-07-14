@@ -129,8 +129,8 @@ app.post('/login', async (req, res) => {
 app.post('/signup', async (req, res) => {
   const { phone, password, name, securityAnswer } = req.body;
 
-  if (!phone || !password || !name || !securityAnswer) {
-    return res.status(400).json({ success: false, message: "Phone, password, name, and security answer are required" });
+  if (!phone || !password || !name) {
+    return res.status(400).json({ success: false, message: "Phone, password, and name are required" });
   }
 
   try {
@@ -146,7 +146,7 @@ app.post('/signup', async (req, res) => {
       name,
       email: 'N/A',
       isPhoneVerified: false,
-      securityAnswer: securityAnswer.trim().toLowerCase(),
+      securityAnswer: securityAnswer ? securityAnswer.trim().toLowerCase() : 'n/a',
       savedAddresses: []
     });
 
@@ -163,6 +163,58 @@ app.post('/signup', async (req, res) => {
     });
   } catch (err) {
     console.error("Signup route error:", err);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
+// Check Phone Endpoint for Forgot Password
+app.post('/forgot-password/check-phone', async (req, res) => {
+  const { phone } = req.body;
+
+  if (!phone) {
+    return res.status(400).json({ success: false, message: "Phone number is required" });
+  }
+
+  try {
+    const user = await User.findOne({ phone }).lean();
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "User exists"
+    });
+  } catch (err) {
+    console.error("Check phone error:", err);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
+// Reset Password (No Question Required - OTP Verified on Client)
+app.post('/forgot-password/reset-password', async (req, res) => {
+  const { phone, newPassword } = req.body;
+
+  if (!phone || !newPassword) {
+    return res.status(400).json({ success: false, message: "Phone and new password are required" });
+  }
+
+  try {
+    const user = await User.findOne({ phone });
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    // Update password
+    user.password = newPassword;
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Password reset successful"
+    });
+  } catch (err) {
+    console.error("Reset password error:", err);
     return res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
@@ -787,6 +839,52 @@ app.get('/restaurants/:restaurantId/menu', async (req, res) => {
 });
 
 
+// POST /api/coupon/validate - Validate coupon code and calculate discount
+app.post('/api/coupon/validate', async (req, res) => {
+  const { couponCode, cartTotal } = req.body;
+
+  if (!couponCode) {
+    return res.status(400).json({ success: false, message: "Coupon code is required" });
+  }
+
+  const subTotal = parseFloat(cartTotal) || 0;
+
+  try {
+    const coupon = await mongoose.connection.db.collection('couponcodes').findOne({
+      couponCode: couponCode.trim().toUpperCase()
+    });
+
+    if (!coupon) {
+      return res.status(404).json({ success: false, message: "Invalid or expired coupon code" });
+    }
+
+    const discountType = coupon.discountType || 'flat';
+    const discountValue = parseFloat(coupon.discountValue) || 0;
+    let discountAmount = 0;
+
+    if (discountType === 'flat') {
+      discountAmount = Math.min(discountValue, subTotal);
+    } else if (discountType === 'percentage') {
+      discountAmount = subTotal * (discountValue / 100);
+    }
+
+    discountAmount = Math.round(discountAmount * 100) / 100; // round to 2 decimal places
+
+    return res.status(200).json({
+      success: true,
+      couponCode: coupon.couponCode,
+      influencerName: coupon.influencerName,
+      discountType,
+      discountValue,
+      discountAmount
+    });
+  } catch (err) {
+    console.error("Coupon validation error:", err);
+    return res.status(500).json({ success: false, message: "Internal server error validating coupon" });
+  }
+});
+
+
 // POST /payment/order - Create a Razorpay payment order
 app.post('/payment/order', async (req, res) => {
   const { amount, userId } = req.body;
@@ -844,7 +942,10 @@ app.post('/payment/verify', async (req, res) => {
     deliveryAddressInfo,
     userCoordinates,
     deliveryDistance,
-    deliveryFee
+    deliveryFee,
+    couponCode,
+    influencerName,
+    discountAmount
   } = req.body;
 
   if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
@@ -903,6 +1004,9 @@ app.post('/payment/verify', async (req, res) => {
       gst: Number(gst),
       platformFee: Number(platformFee),
       grandTotal: Number(grandTotal),
+      couponCode: couponCode || null,
+      influencerName: influencerName || null,
+      discountAmount: discountAmount ? Number(discountAmount) : 0,
       orderId: generatedOrderId,
       razorpayOrderId: razorpay_order_id,
       razorpayPaymentId: razorpay_payment_id,
@@ -934,6 +1038,18 @@ app.post('/payment/verify', async (req, res) => {
       status: "waiting for the restaurent to accept"
     };
     await orderStatusesCollection.insertOne(statusDocument);
+
+    // Update user coins on backend
+    if (userId && coinsEarned > 0) {
+      try {
+        await User.findByIdAndUpdate(userId, {
+          $inc: { coins: Number(coinsEarned) }
+        });
+        console.log(`[Verify] Added ${coinsEarned} coins to user ${userId}`);
+      } catch (coinErr) {
+        console.error("Failed to update user coins in database:", coinErr);
+      }
+    }
 
     // Auto-save delivery address to user's savedAddresses if it's new and not a duplicate
     if (userId && deliveryAddressInfo && deliveryAddressInfo.flatNo && deliveryAddressInfo.street) {
@@ -1096,7 +1212,14 @@ app.get('/fees-config', async (req, res) => {
         deliveryFeeBase: 20,
         deliveryFeePerKm: 10,
         surgeFee: 0,
-        isSurgeActive: false
+        isSurgeActive: false,
+        isCoinsActive: true,
+        coinMinOrderAmount: 200,
+        coinBaseAmount: 10,
+        coinStepAmount: 100,
+        coinStepValue: 5,
+        coinMaxLimit: 100,
+        coinMaxThreshold: 1000
       };
     }
     return res.status(200).json({ success: true, config });
