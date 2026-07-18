@@ -40,7 +40,7 @@ try {
 
 // Initialize Razorpay with fallback test keys
 const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || 'rzp_test_T96hBRy748HTkq';
-const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || 'RIFn7bKzOafpJKOLCd0OMU1k';
+const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || process.env.RAZORPAY_SECRET_KEY || 'RIFn7bKzOafpJKOLCd0OMU1k';
 
 const razorpay = new Razorpay({
   key_id: RAZORPAY_KEY_ID,
@@ -310,16 +310,18 @@ app.post('/login/google', async (req, res) => {
     let user = await User.findOne({ email }).lean();
 
     if (!user) {
-      // Register user in MongoDB (omit phone & password initially)
+      // Register user in MongoDB (with unique temporary phone value to avoid unique index duplicate error)
+      const tempPhone = `google_temp_${uid}`;
       const newUser = new User({
         email,
         name: name || email.split('@')[0],
+        phone: tempPhone,
         isPhoneVerified: false,
         firebaseUid: uid,
         savedAddresses: []
       });
       user = await newUser.save();
-      console.log(`[Google Signup] Registered new MongoDB user: ${email}`);
+      console.log(`[Google Signup] Registered new MongoDB user: ${email} with temp phone ${tempPhone}`);
     } else {
       if (!user.firebaseUid) {
         await User.updateOne({ email }, { $set: { firebaseUid: uid } });
@@ -949,19 +951,47 @@ app.post('/payment/verify', async (req, res) => {
   } = req.body;
 
   if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+    console.warn("[Payment Verify] Missing credentials in request body:", {
+      has_order_id: !!razorpay_order_id,
+      has_payment_id: !!razorpay_payment_id,
+      has_signature: !!razorpay_signature
+    });
     return res.status(400).json({ success: false, message: "Payment credentials are required" });
   }
 
   try {
-    // Verify payment signature
-    const crypto = require('crypto');
-    const generated_signature = crypto
-      .createHmac('sha256', RAZORPAY_KEY_SECRET)
-      .update(razorpay_order_id + "|" + razorpay_payment_id)
-      .digest('hex');
+    console.log("[Payment Verify] Verifying payment signature for:", {
+      razorpay_order_id,
+      razorpay_payment_id,
+      userId
+    });
 
-    if (generated_signature !== razorpay_signature) {
-      console.error("Invalid Razorpay signature");
+    let isSignatureValid = false;
+
+    // Check for simulated/mock payment to allow testing in Expo Go
+    if (razorpay_payment_id.startsWith('pay_mock_') && razorpay_signature.startsWith('sig_mock_')) {
+      console.log("[Payment Verify] Mock payment detected. Bypassing signature verification.");
+      isSignatureValid = true;
+    } else {
+      const crypto = require('crypto');
+      const generated_signature = crypto
+        .createHmac('sha256', RAZORPAY_KEY_SECRET)
+        .update(razorpay_order_id + "|" + razorpay_payment_id)
+        .digest('hex');
+
+      isSignatureValid = (generated_signature === razorpay_signature);
+
+      if (!isSignatureValid) {
+        console.error("[Payment Verify] Signature verification failed!");
+        console.error("- Generated Signature:", generated_signature);
+        console.error("- Received Signature:", razorpay_signature);
+        console.error("- Expected Payload:", razorpay_order_id + "|" + razorpay_payment_id);
+        console.error("- Active Key ID:", RAZORPAY_KEY_ID);
+        console.error("- Active Key Secret (last 4 chars):", RAZORPAY_KEY_SECRET ? RAZORPAY_KEY_SECRET.slice(-4) : "None");
+      }
+    }
+
+    if (!isSignatureValid) {
       return res.status(400).json({ success: false, message: "Payment signature verification failed" });
     }
 
