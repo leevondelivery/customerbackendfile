@@ -125,6 +125,25 @@ app.post('/login', async (req, res) => {
   }
 });
 
+// Check Phone Uniqueness Endpoint
+app.get('/check-phone/:phone', async (req, res) => {
+  try {
+    const { phone } = req.params;
+    const { excludeUserId } = req.query;
+    const user = await User.findOne({ phone }).lean();
+    if (user) {
+      if (excludeUserId && String(user._id) === String(excludeUserId)) {
+        return res.status(200).json({ success: true, exists: false });
+      }
+      return res.status(200).json({ success: true, exists: true });
+    }
+    return res.status(200).json({ success: true, exists: false });
+  } catch (err) {
+    console.error("Check phone error:", err);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
 // Signup Endpoint
 app.post('/signup', async (req, res) => {
   const { phone, password, name, securityAnswer } = req.body;
