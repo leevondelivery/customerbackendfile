@@ -806,7 +806,7 @@ app.delete('/user/:userid/addresses/:addressId', async (req, res) => {
 // In-memory cache for mapping restaurantId -> collectionName in the 'restuarents' database
 let restaurantIdToCollectionMap = {};
 
-// GET /restaurants/:restaurantId/menu Endpoint
+// GET /restaurants/
 app.get('/restaurants/:restaurantId/menu', async (req, res) => {
   const { restaurantId } = req.params;
 
