@@ -527,7 +527,7 @@ app.get('/carousel', async (req, res) => {
 });
 
 
-// GET /orders/completed/:userId Endpoint
+// GET /orders/completed/:userId Endpoint (fetches completed & rejected orders)
 app.get('/orders/completed/:userId', async (req, res) => {
   const { userId } = req.params;
 
@@ -537,6 +537,7 @@ app.get('/orders/completed/:userId', async (req, res) => {
 
   try {
     const ordersCollection = mongoose.connection.db.collection('finalcompletedorders');
+    const rejectedCollection = mongoose.connection.db.collection('rejectedorders');
     console.log(`[GET /orders/completed/${userId}] Request received.`);
     const query = {
       $or: [
@@ -550,12 +551,34 @@ app.get('/orders/completed/:userId', async (req, res) => {
 
     console.log(`[GET /orders/completed/${userId}] Querying database:`, JSON.stringify(query));
 
-    // Find all completed orders matching string or objectId format
-    const orders = await ordersCollection.find(query).sort({ orderDate: -1 }).toArray();
+    // Fetch orders from both finalcompletedorders and rejectedorders collections
+    const [completedOrders, rejectedOrders] = await Promise.all([
+      ordersCollection.find(query).toArray(),
+      rejectedCollection.find(query).toArray()
+    ]);
 
-    return res.status(200).json({ success: true, orders });
+    const formattedCompleted = completedOrders.map(order => ({
+      ...order,
+      status: order.status || 'Completed',
+      isRejected: false
+    }));
+
+    const formattedRejected = rejectedOrders.map(order => ({
+      ...order,
+      status: order.status || 'Rejected',
+      isRejected: true
+    }));
+
+    // Combine and sort by date descending (newest first)
+    const combinedOrders = [...formattedCompleted, ...formattedRejected].sort((a, b) => {
+      const dateA = new Date(a.orderDate || a.completedAt || a.createdAt || 0);
+      const dateB = new Date(b.orderDate || b.completedAt || b.createdAt || 0);
+      return dateB - dateA;
+    });
+
+    return res.status(200).json({ success: true, orders: combinedOrders });
   } catch (err) {
-    console.error("Get completed orders error:", err);
+    console.error("Get completed and rejected orders error:", err);
     return res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
