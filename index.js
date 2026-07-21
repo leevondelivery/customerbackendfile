@@ -370,7 +370,9 @@ const restaurantSchema = new mongoose.Schema({
   restLocation: { type: String },
   address: { type: String },
   openTime: { type: String },
-  closeTime: { type: String }
+  closeTime: { type: String },
+  isActive: { type: Boolean, default: true },
+  isactive: { type: Boolean, default: true }
 }, { strict: false });
 
 const Restaurant = mongoose.model('Restaurant', restaurantSchema, 'restuarentusers');
@@ -418,7 +420,7 @@ async function getRestaurantCategoriesMap() {
 
 let cachedRestaurants = null;
 let cacheExpiryTime = 0;
-const CACHE_DURATION_MS = 10000; // 10 seconds cache duration
+const CACHE_DURATION_MS = 1000; // 1 second cache duration for fast live isActive updates
 
 // GET /restaurants Endpoint
 app.get('/restaurants', async (req, res) => {
