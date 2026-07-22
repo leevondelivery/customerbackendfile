@@ -931,9 +931,9 @@ app.post('/api/coupon/validate', async (req, res) => {
 });
 
 
-// POST /payment/order - Create a Razorpay payment order
+// POST /payment/order - Create a Razorpay payment order with backend restaurant & item status validation
 app.post('/payment/order', async (req, res) => {
-  const { amount, userId } = req.body;
+  const { amount, userId, restaurantId, cartItems } = req.body;
   if (!amount) {
     return res.status(400).json({ success: false, message: "Amount is required" });
   }
@@ -948,6 +948,88 @@ app.post('/payment/order', async (req, res) => {
         });
       }
     }
+
+    // 1. Server-side Restaurant Active Status Validation directly in MongoDB
+    const targetRestId = String(restaurantId || (Array.isArray(cartItems) && cartItems[0] ? (cartItems[0].restId || cartItems[0].restaurantId) : '') || '');
+    if (targetRestId) {
+      const restDoc = await Restaurant.findOne({
+        $or: [
+          { restId: targetRestId },
+          { _id: mongoose.Types.ObjectId.isValid(targetRestId) ? new mongoose.Types.ObjectId(targetRestId) : null }
+        ]
+      }).lean();
+
+      if (restDoc) {
+        const isRestOpen = restDoc.isActive !== false &&
+                           restDoc.isActive !== 'false' &&
+                           restDoc.isactive !== false &&
+                           restDoc.isactive !== 'false' &&
+                           restDoc.isActive !== 0 &&
+                           restDoc.isactive !== 0 &&
+                           restDoc.isOpen !== false &&
+                           restDoc.isOpen !== 'false' &&
+                           restDoc.isOpen !== 0 &&
+                           String(restDoc.status || '').toLowerCase() !== 'closed' &&
+                           String(restDoc.status || '').toLowerCase() !== 'inactive' &&
+                           String(restDoc.status || '').toLowerCase() !== 'off';
+
+        if (!isRestOpen) {
+          return res.status(400).json({
+            success: false,
+            isRestaurantClosed: true,
+            message: "Sorry, restaurant is closed."
+          });
+        }
+      }
+
+      // 2. Server-side Cart Items Availability Validation directly in MongoDB
+      if (Array.isArray(cartItems) && cartItems.length > 0) {
+        try {
+          const db = mongoose.connection.client.db('restuarents');
+          const collections = await db.listCollections().toArray();
+          const targetCol = collections.find(c => c.name.toLowerCase().includes(targetRestId.toLowerCase()));
+          
+          if (targetCol) {
+            const col = db.collection(targetCol.name);
+            const freshMenuItems = await col.find({}).toArray();
+
+            for (const item of cartItems) {
+              const freshItem = freshMenuItems.find(m => 
+                String(m._id || m.id || m.itemId || '') === String(item._id || item.id || item.itemId || '') ||
+                (m.itemName && item.name && m.itemName.trim().toLowerCase() === item.name.trim().toLowerCase())
+              );
+
+              if (freshItem) {
+                const isAvail = freshItem.itemStatus !== false &&
+                                freshItem.itemStatus !== 'false' &&
+                                freshItem.itemtodisplayintherestuarentapp !== false &&
+                                freshItem.itemtodisplayintherestuarentapp !== 'false' &&
+                                freshItem.available !== false &&
+                                freshItem.available !== 'false' &&
+                                freshItem.isAvailable !== false &&
+                                freshItem.isAvailable !== 'false' &&
+                                String(freshItem.status || '').toLowerCase() !== 'unavailable' &&
+                                String(freshItem.status || '').toLowerCase() !== 'out_of_stock' &&
+                                String(freshItem.status || '').toLowerCase() !== 'inactive' &&
+                                String(freshItem.status || '').toLowerCase() !== 'off' &&
+                                String(freshItem.status || '').toLowerCase() !== 'false';
+
+                if (!isAvail) {
+                  return res.status(400).json({
+                    success: false,
+                    isItemUnavailable: true,
+                    message: `Sorry, "${item.name || item.itemName || 'item'}" is not available.`
+                  });
+                }
+              }
+            }
+          }
+        } catch (menuErr) {
+          console.warn('[POST /payment/order] Menu validation warning:', menuErr.message);
+        }
+      }
+    }
+
     const options = {
       amount: Math.round(amount * 100), // amount in paise
       currency: "INR",
