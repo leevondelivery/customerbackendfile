@@ -15,7 +15,7 @@ let firebaseApp = null;
 try {
   let serviceAccount = null;
   const serviceAccountPath = path.join(__dirname, 'firebase-service-account.json');
-  
+
   if (fs.existsSync(serviceAccountPath)) {
     serviceAccount = require(serviceAccountPath);
   } else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
@@ -170,7 +170,7 @@ app.post('/signup', async (req, res) => {
     });
 
     const savedUser = await newUser.save();
-    
+
     // Exclude password from response
     const userObj = savedUser.toObject();
     const { password: _, ...userData } = userObj;
@@ -391,7 +391,7 @@ async function getRestaurantCategoriesMap() {
     const db = mongoose.connection.client.db('restuarents');
     const collections = await db.listCollections().toArray();
     const categoriesMap = {};
-    
+
     // Fetch unique categories in parallel for all restaurant menu collections
     await Promise.all(collections.map(async (colInfo) => {
       try {
@@ -408,7 +408,7 @@ async function getRestaurantCategoriesMap() {
         console.error(`Error loading categories for ${colInfo.name}:`, err);
       }
     }));
-    
+
     restaurantCategoriesCache = categoriesMap;
     categoriesCacheExpiryTime = now + CATEGORIES_CACHE_DURATION;
     return categoriesMap;
@@ -439,7 +439,7 @@ app.get('/restaurants', async (req, res) => {
     const mappedRestaurants = restaurants.map(rest => {
       const restId = rest.restId;
       const categories = categoriesMap[restId] || [];
-      
+
       let updatedRest = { ...rest, categories };
 
       if (rest.logoUrl) {
@@ -1300,123 +1300,6 @@ app.get('/fees-config', async (req, res) => {
   } catch (err) {
     console.error("Get fees config error:", err);
     return res.status(500).json({ success: false, message: "Internal server error" });
-  }
-});
-
-// ── Reviews Schema & Endpoints ───────────────────────────────────────────────
-const reviewSchema = new mongoose.Schema({
-  userId: { type: String, required: true },
-  orderId: { type: String, required: true },
-  restaurantId: { type: String },
-  restaurantName: { type: String },
-  restaurantRating: { type: Number, default: 5 },
-  restaurantReview: { type: String, default: '' },
-  deliveryBoyRating: { type: Number, default: 5 },
-  deliveryBoyReview: { type: String, default: '' },
-  deliveryBoyName: { type: String, default: '' },
-  createdAt: { type: Date, default: Date.now }
-}, { strict: false });
-
-const Review = mongoose.model('Review', reviewSchema, 'reviews');
-
-// POST /reviews endpoint to create/save order reviews
-app.post(['/reviews', '/reviews/add', '/reviews/create', '/review'], async (req, res) => {
-  try {
-    const {
-      userId,
-      orderId,
-      restaurantId,
-      restaurantName,
-      restaurantRating,
-      restaurantReview,
-      deliveryBoyRating,
-      deliveryBoyReview,
-      deliveryBoyName
-    } = req.body;
-
-    if (!userId || !orderId) {
-      return res.status(400).json({ success: false, message: 'userId and orderId are required' });
-    }
-
-    const reviewData = {
-      userId: String(userId),
-      orderId: String(orderId),
-      restaurantId: restaurantId ? String(restaurantId) : '',
-      restaurantName: restaurantName || '',
-      restaurantRating: Number(restaurantRating) || 5,
-      restaurantReview: restaurantReview || '',
-      deliveryBoyRating: Number(deliveryBoyRating) || 5,
-      deliveryBoyReview: deliveryBoyReview || '',
-      deliveryBoyName: deliveryBoyName || '',
-      createdAt: new Date()
-    };
-
-    const filterQuery = {
-      $or: [
-        { userId: String(userId), orderId: String(orderId) },
-        { userId: String(userId), orderId: orderId }
-      ]
-    };
-    if (mongoose.Types.ObjectId.isValid(userId)) {
-      filterQuery.$or.push({ userId: new mongoose.Types.ObjectId(userId), orderId: String(orderId) });
-    }
-
-    const review = await Review.findOneAndUpdate(
-      filterQuery,
-      reviewData,
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    );
-
-    console.log('[Backend] Review saved in MongoDB for order:', orderId);
-    return res.status(201).json({ success: true, message: 'Review submitted successfully', review });
-  } catch (err) {
-    console.error('[Backend] Error creating review:', err);
-    return res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-// GET /reviews endpoint to fetch all reviews in DB
-app.get(['/reviews', '/reviews/all'], async (req, res) => {
-  try {
-    const reviews = await Review.find({}).sort({ createdAt: -1 }).lean();
-    return res.status(200).json({ success: true, reviews: reviews || [] });
-  } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-// GET /reviews/user/:userid endpoint to fetch all reviews by a user from MongoDB
-app.get('/reviews/user/:userid', async (req, res) => {
-  try {
-    const { userid } = req.params;
-    if (!userid) {
-      return res.status(400).json({ success: false, message: 'User ID is required' });
-    }
-
-    const cleanUserid = String(userid).trim();
-    const findQuery = {
-      $or: [
-        { userId: cleanUserid },
-        { userId: userid },
-        { userId: { $regex: new RegExp(`^${cleanUserid}$`, 'i') } }
-      ]
-    };
-    if (mongoose.Types.ObjectId.isValid(userid)) {
-      findQuery.$or.push({ userId: new mongoose.Types.ObjectId(userid) });
-    }
-
-    let reviews = await Review.find(findQuery).sort({ createdAt: -1 }).lean();
-
-    // Fallback: If no specific user filter match, return all reviews in collection
-    if (!reviews || reviews.length === 0) {
-      reviews = await Review.find({}).sort({ createdAt: -1 }).lean();
-    }
-
-    console.log(`[Backend] Fetched ${reviews.length} reviews from MongoDB for user:`, userid);
-    return res.status(200).json({ success: true, reviews: reviews || [] });
-  } catch (err) {
-    console.error('[Backend] Error fetching reviews from MongoDB:', err);
-    return res.status(500).json({ success: false, message: err.message });
   }
 });
 
