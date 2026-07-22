@@ -1351,13 +1351,23 @@ app.post(['/reviews', '/reviews/add', '/reviews/create', '/review'], async (req,
       createdAt: new Date()
     };
 
+    const filterQuery = {
+      $or: [
+        { userId: String(userId), orderId: String(orderId) },
+        { userId: String(userId), orderId: orderId }
+      ]
+    };
+    if (mongoose.Types.ObjectId.isValid(userId)) {
+      filterQuery.$or.push({ userId: new mongoose.Types.ObjectId(userId), orderId: String(orderId) });
+    }
+
     const review = await Review.findOneAndUpdate(
-      { userId: String(userId), orderId: String(orderId) },
+      filterQuery,
       reviewData,
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
 
-    console.log('[Backend] Review saved successfully for order:', orderId);
+    console.log('[Backend] Review saved in MongoDB for order:', orderId);
     return res.status(201).json({ success: true, message: 'Review submitted successfully', review });
   } catch (err) {
     console.error('[Backend] Error creating review:', err);
@@ -1365,7 +1375,7 @@ app.post(['/reviews', '/reviews/add', '/reviews/create', '/review'], async (req,
   }
 });
 
-// GET /reviews/user/:userid endpoint to fetch all reviews by a user
+// GET /reviews/user/:userid endpoint to fetch all reviews by a user from MongoDB
 app.get('/reviews/user/:userid', async (req, res) => {
   try {
     const { userid } = req.params;
@@ -1373,10 +1383,21 @@ app.get('/reviews/user/:userid', async (req, res) => {
       return res.status(400).json({ success: false, message: 'User ID is required' });
     }
 
-    const reviews = await Review.find({ userId: String(userid) }).sort({ createdAt: -1 }).lean();
+    const findQuery = {
+      $or: [
+        { userId: String(userid) },
+        { userId: userid }
+      ]
+    };
+    if (mongoose.Types.ObjectId.isValid(userid)) {
+      findQuery.$or.push({ userId: new mongoose.Types.ObjectId(userid) });
+    }
+
+    const reviews = await Review.find(findQuery).sort({ createdAt: -1 }).lean();
+    console.log(`[Backend] Fetched ${reviews.length} reviews from MongoDB for user:`, userid);
     return res.status(200).json({ success: true, reviews: reviews || [] });
   } catch (err) {
-    console.error('[Backend] Error fetching reviews:', err);
+    console.error('[Backend] Error fetching reviews from MongoDB:', err);
     return res.status(500).json({ success: false, message: err.message });
   }
 });
