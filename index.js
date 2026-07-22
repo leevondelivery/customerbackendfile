@@ -10,7 +10,7 @@ const fs = require('fs');
 
 const app = express();
 
-// Initialize Firebase Admin SDK
+
 let firebaseApp = null;
 try {
   let serviceAccount = null;
@@ -38,7 +38,7 @@ try {
   console.error('Failed to initialize Firebase Admin SDK:', err);
 }
 
-// Initialize Razorpay with fallback test keys
+
 const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || 'rzp_test_T96hBRy748HTkq';
 const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || process.env.RAZORPAY_SECRET_KEY || 'RIFn7bKzOafpJKOLCd0OMU1k';
 
@@ -52,7 +52,7 @@ const MONGODB_URI = process.env.MONGODB_URI || "mongodb+srv://omnia771148_db_use
 app.use(cors());
 app.use(express.json());
 
-// Ensure MongoDB is connected before handling requests
+
 app.use((req, res, next) => {
   if (mongoose.connection.readyState !== 1) {
     return res.status(503).json({
@@ -1300,6 +1300,84 @@ app.get('/fees-config', async (req, res) => {
   } catch (err) {
     console.error("Get fees config error:", err);
     return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
+// ── Reviews Schema & Endpoints ───────────────────────────────────────────────
+const reviewSchema = new mongoose.Schema({
+  userId: { type: String, required: true },
+  orderId: { type: String, required: true },
+  restaurantId: { type: String },
+  restaurantName: { type: String },
+  restaurantRating: { type: Number, default: 5 },
+  restaurantReview: { type: String, default: '' },
+  deliveryBoyRating: { type: Number, default: 5 },
+  deliveryBoyReview: { type: String, default: '' },
+  deliveryBoyName: { type: String, default: '' },
+  createdAt: { type: Date, default: Date.now }
+}, { strict: false });
+
+const Review = mongoose.model('Review', reviewSchema, 'reviews');
+
+// POST /reviews endpoint to create/save order reviews
+app.post(['/reviews', '/reviews/add', '/reviews/create', '/review'], async (req, res) => {
+  try {
+    const {
+      userId,
+      orderId,
+      restaurantId,
+      restaurantName,
+      restaurantRating,
+      restaurantReview,
+      deliveryBoyRating,
+      deliveryBoyReview,
+      deliveryBoyName
+    } = req.body;
+
+    if (!userId || !orderId) {
+      return res.status(400).json({ success: false, message: 'userId and orderId are required' });
+    }
+
+    const reviewData = {
+      userId: String(userId),
+      orderId: String(orderId),
+      restaurantId: restaurantId ? String(restaurantId) : '',
+      restaurantName: restaurantName || '',
+      restaurantRating: Number(restaurantRating) || 5,
+      restaurantReview: restaurantReview || '',
+      deliveryBoyRating: Number(deliveryBoyRating) || 5,
+      deliveryBoyReview: deliveryBoyReview || '',
+      deliveryBoyName: deliveryBoyName || '',
+      createdAt: new Date()
+    };
+
+    const review = await Review.findOneAndUpdate(
+      { userId: String(userId), orderId: String(orderId) },
+      reviewData,
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
+    console.log('[Backend] Review saved successfully for order:', orderId);
+    return res.status(201).json({ success: true, message: 'Review submitted successfully', review });
+  } catch (err) {
+    console.error('[Backend] Error creating review:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// GET /reviews/user/:userid endpoint to fetch all reviews by a user
+app.get('/reviews/user/:userid', async (req, res) => {
+  try {
+    const { userid } = req.params;
+    if (!userid) {
+      return res.status(400).json({ success: false, message: 'User ID is required' });
+    }
+
+    const reviews = await Review.find({ userId: String(userid) }).sort({ createdAt: -1 }).lean();
+    return res.status(200).json({ success: true, reviews: reviews || [] });
+  } catch (err) {
+    console.error('[Backend] Error fetching reviews:', err);
+    return res.status(500).json({ success: false, message: err.message });
   }
 });
 
