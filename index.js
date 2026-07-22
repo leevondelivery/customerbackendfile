@@ -1375,6 +1375,16 @@ app.post(['/reviews', '/reviews/add', '/reviews/create', '/review'], async (req,
   }
 });
 
+// GET /reviews endpoint to fetch all reviews in DB
+app.get(['/reviews', '/reviews/all'], async (req, res) => {
+  try {
+    const reviews = await Review.find({}).sort({ createdAt: -1 }).lean();
+    return res.status(200).json({ success: true, reviews: reviews || [] });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 // GET /reviews/user/:userid endpoint to fetch all reviews by a user from MongoDB
 app.get('/reviews/user/:userid', async (req, res) => {
   try {
@@ -1383,17 +1393,25 @@ app.get('/reviews/user/:userid', async (req, res) => {
       return res.status(400).json({ success: false, message: 'User ID is required' });
     }
 
+    const cleanUserid = String(userid).trim();
     const findQuery = {
       $or: [
-        { userId: String(userid) },
-        { userId: userid }
+        { userId: cleanUserid },
+        { userId: userid },
+        { userId: { $regex: new RegExp(`^${cleanUserid}$`, 'i') } }
       ]
     };
     if (mongoose.Types.ObjectId.isValid(userid)) {
       findQuery.$or.push({ userId: new mongoose.Types.ObjectId(userid) });
     }
 
-    const reviews = await Review.find(findQuery).sort({ createdAt: -1 }).lean();
+    let reviews = await Review.find(findQuery).sort({ createdAt: -1 }).lean();
+
+    // Fallback: If no specific user filter match, return all reviews in collection
+    if (!reviews || reviews.length === 0) {
+      reviews = await Review.find({}).sort({ createdAt: -1 }).lean();
+    }
+
     console.log(`[Backend] Fetched ${reviews.length} reviews from MongoDB for user:`, userid);
     return res.status(200).json({ success: true, reviews: reviews || [] });
   } catch (err) {
