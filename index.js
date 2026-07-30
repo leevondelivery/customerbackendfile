@@ -1304,6 +1304,39 @@ app.get('/fees-config', async (req, res) => {
 });
 
 // ==========================================
+// COMPLETED ORDERS ENDPOINT (MongoDB 'orders' Collection)
+// ==========================================
+
+// GET /orders/completed/:userid - Fetch completed orders for a user
+app.get(['/orders/completed/:userid', '/orders/completed/user/:userid'], async (req, res) => {
+  try {
+    const { userid } = req.params;
+    if (!userid) {
+      return res.status(400).json({ success: false, message: 'User ID is required' });
+    }
+
+    const ordersCollection = mongoose.connection.db.collection('orders');
+    const userOrders = await ordersCollection
+      .find({
+        $or: [
+          { userId: String(userid) },
+          { user_id: String(userid) }
+        ]
+      })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    return res.status(200).json({
+      success: true,
+      orders: userOrders || []
+    });
+  } catch (err) {
+    console.error('Error fetching completed orders:', err);
+    return res.status(500).json({ success: false, message: 'Failed to fetch completed orders', error: err.message });
+  }
+});
+
+// ==========================================
 // REVIEWS ENDPOINTS (MongoDB 'reviews' Collection)
 // ==========================================
 
