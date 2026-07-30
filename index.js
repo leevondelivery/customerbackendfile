@@ -1303,6 +1303,118 @@ app.get('/fees-config', async (req, res) => {
   }
 });
 
+// ==========================================
+// REVIEWS ENDPOINTS (MongoDB 'reviews' Collection)
+// ==========================================
+
+// GET /reviews/user/:userid - Fetch all reviews given by a user from MongoDB
+app.get('/reviews/user/:userid', async (req, res) => {
+  try {
+    const { userid } = req.params;
+    if (!userid) {
+      return res.status(400).json({ success: false, message: 'User ID is required' });
+    }
+
+    const reviewsCollection = mongoose.connection.db.collection('reviews');
+    const userReviews = await reviewsCollection
+      .find({
+        $or: [
+          { userId: String(userid) },
+          { user_id: String(userid) }
+        ]
+      })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    return res.status(200).json({
+      success: true,
+      reviews: userReviews || []
+    });
+  } catch (err) {
+    console.error('Error fetching user reviews from MongoDB:', err);
+    return res.status(500).json({ success: false, message: 'Failed to fetch user reviews', error: err.message });
+  }
+});
+
+// POST /reviews (and fallback aliases) - Save review into MongoDB 'reviews' collection
+const handleSaveReview = async (req, res) => {
+  try {
+    const {
+      userId,
+      user_id,
+      orderId,
+      order_id,
+      restaurantId,
+      restaurant_id,
+      restaurantName,
+      deliveryBoyId,
+      delivery_boy_id,
+      deliveryBoyName,
+      restaurantRating,
+      restaurantReview,
+      rating,
+      review,
+      deliveryBoyRating,
+      deliveryBoyReview,
+      orderDetails
+    } = req.body;
+
+    const finalUserId = userId || user_id || req.params.userid;
+    const finalOrderId = orderId || order_id || req.params.orderId;
+
+    if (!finalOrderId) {
+      return res.status(400).json({ success: false, message: 'Order ID is required' });
+    }
+
+    const reviewsCollection = mongoose.connection.db.collection('reviews');
+
+    const reviewDoc = {
+      userId: String(finalUserId || ''),
+      user_id: String(finalUserId || ''),
+      orderId: String(finalOrderId),
+      order_id: String(finalOrderId),
+      restaurantId: String(restaurantId || restaurant_id || ''),
+      restaurant_id: String(restaurantId || restaurant_id || ''),
+      restaurantName: restaurantName || 'Restaurant',
+      deliveryBoyId: String(deliveryBoyId || delivery_boy_id || ''),
+      delivery_boy_id: String(deliveryBoyId || delivery_boy_id || ''),
+      deliveryBoyName: deliveryBoyName || 'Delivery Partner',
+      restaurantRating: Number(restaurantRating ?? rating ?? 0),
+      restaurantReview: (restaurantReview || review || '').trim(),
+      deliveryBoyRating: Number(deliveryBoyRating ?? 0),
+      deliveryBoyReview: (deliveryBoyReview || '').trim(),
+      orderDetails: orderDetails || [],
+      createdAt: new Date()
+    };
+
+    // Upsert review into 'reviews' collection in MongoDB
+    await reviewsCollection.updateOne(
+      { orderId: String(finalOrderId) },
+      { $set: reviewDoc },
+      { upsert: true }
+    );
+
+    console.log('[Backend] Successfully saved review to MongoDB reviews collection for order:', finalOrderId);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Review saved successfully to MongoDB',
+      review: reviewDoc
+    });
+  } catch (err) {
+    console.error('Error saving review to MongoDB:', err);
+    return res.status(500).json({ success: false, message: 'Failed to save review', error: err.message });
+  }
+};
+
+app.post('/reviews', handleSaveReview);
+app.post('/reviews/user/:userid', handleSaveReview);
+app.post('/reviews/create', handleSaveReview);
+app.post('/reviews/add', handleSaveReview);
+app.post('/reviews/submit', handleSaveReview);
+app.post('/review', handleSaveReview);
+app.post('/orders/review', handleSaveReview);
+
 // Start Server
 app.listen(PORT, () => {
   console.log(`Backend server running on port ${PORT}`);
