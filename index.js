@@ -93,6 +93,46 @@ const feesConfigSchema = new mongoose.Schema({
 
 const FeesConfig = mongoose.model('FeesConfig', feesConfigSchema, 'feesconfigs');
 
+// Controls Schema and Model (mapped to 'controls' collection in MongoDB)
+const controlsSchema = new mongoose.Schema({
+  key: { type: String, required: true },
+  name: { type: String },
+  status: { type: Boolean, default: true },
+  history: { type: Array, default: [] }
+}, { timestamps: true, collection: 'controls', strict: false });
+
+const Controls = mongoose.model('Controls', controlsSchema, 'controls');
+
+// Controls API Endpoints
+const handleGetControls = async (req, res) => {
+  try {
+    const allControls = await Controls.find({}).lean();
+    return res.status(200).json({
+      success: true,
+      controls: allControls
+    });
+  } catch (error) {
+    console.error('Error fetching controls from MongoDB:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+app.get('/api/controls', handleGetControls);
+app.get('/controls', handleGetControls);
+
+app.get('/api/controls/confirmPayButton', async (req, res) => {
+  try {
+    const control = await Controls.findOne({ key: 'confirmPayButton' }).lean();
+    return res.status(200).json({
+      success: true,
+      status: control ? Boolean(control.status) : true,
+      control
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Login Endpoint
 app.post('/login', async (req, res) => {
   const { phone, password } = req.body;
