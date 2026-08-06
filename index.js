@@ -101,6 +101,8 @@ const controlsSchema = new mongoose.Schema({
   history: { type: Array, default: [] }
 }, { timestamps: true, collection: 'controls', strict: false });
 
+controlsSchema.index({ key: 1 });
+
 const Controls = mongoose.model('Controls', controlsSchema, 'controls');
 
 // Controls API Endpoints
@@ -149,6 +151,9 @@ const reviewSchema = new mongoose.Schema({
   deliveryBoyReview: { type: String, default: '' },
   orderDetails: { type: Array, default: [] }
 }, { timestamps: true, collection: 'reviews', strict: false });
+
+reviewSchema.index({ userId: 1 });
+reviewSchema.index({ orderId: 1 });
 
 const Review = mongoose.model('Review', reviewSchema, 'reviews');
 
