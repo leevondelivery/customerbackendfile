@@ -234,6 +234,28 @@ app.post('/reviews/create', handleCreateReview);
 app.post('/reviews/add', handleCreateReview);
 app.post('/reviews/submit', handleCreateReview);
 
+// Orders Completed Endpoint
+const handleGetCompletedOrders = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const ordersCollection = mongoose.connection.db.collection('orders');
+    const userOrders = await ordersCollection.find({
+      $or: [{ userId: userId }, { user_id: userId }, { customerId: userId }]
+    }).sort({ createdAt: -1 }).toArray();
+
+    return res.status(200).json({
+      success: true,
+      orders: userOrders || []
+    });
+  } catch (error) {
+    console.error('Error fetching completed orders:', error);
+    return res.status(200).json({ success: true, orders: [] });
+  }
+};
+
+app.get('/orders/completed/:userId', handleGetCompletedOrders);
+app.get('/api/orders/completed/:userId', handleGetCompletedOrders);
+
 // GET /api/controls/maintenanceMode
 // Returns the maintenanceMode status from the controls collection.
 // status: true  => app is live and running normally
