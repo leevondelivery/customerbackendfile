@@ -133,6 +133,100 @@ app.get('/api/controls/confirmPayButton', async (req, res) => {
   }
 });
 
+// Review Schema and Model (mapped to 'reviews' collection in MongoDB)
+const reviewSchema = new mongoose.Schema({
+  userId: { type: String, required: true },
+  user_id: { type: String },
+  orderId: { type: String },
+  order_id: { type: String },
+  restaurantId: { type: String },
+  restaurantName: { type: String },
+  deliveryBoyId: { type: String },
+  deliveryBoyName: { type: String },
+  restaurantRating: { type: Number, default: 0 },
+  restaurantReview: { type: String, default: '' },
+  deliveryBoyRating: { type: Number, default: 0 },
+  deliveryBoyReview: { type: String, default: '' },
+  orderDetails: { type: Array, default: [] }
+}, { timestamps: true, collection: 'reviews', strict: false });
+
+const Review = mongoose.model('Review', reviewSchema, 'reviews');
+
+// Review Endpoints
+const handleGetUserReviews = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const userReviews = await Review.find({
+      $or: [{ userId: userId }, { user_id: userId }]
+    }).sort({ createdAt: -1 }).lean();
+
+    return res.status(200).json({
+      success: true,
+      reviews: userReviews
+    });
+  } catch (error) {
+    console.error('Error fetching user reviews from MongoDB:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+app.get('/reviews/user/:userId', handleGetUserReviews);
+app.get('/api/reviews/user/:userId', handleGetUserReviews);
+app.get('/reviews/:userId', handleGetUserReviews);
+app.get('/api/reviews/:userId', handleGetUserReviews);
+
+const handleGetAllReviews = async (req, res) => {
+  try {
+    const allReviews = await Review.find({}).sort({ createdAt: -1 }).lean();
+    return res.status(200).json({
+      success: true,
+      reviews: allReviews
+    });
+  } catch (error) {
+    console.error('Error fetching all reviews from MongoDB:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+app.get('/reviews', handleGetAllReviews);
+app.get('/api/reviews', handleGetAllReviews);
+
+const handleCreateReview = async (req, res) => {
+  try {
+    const reviewData = req.body;
+    const newReview = new Review({
+      userId: reviewData.userId || reviewData.user_id || '',
+      user_id: reviewData.user_id || reviewData.userId || '',
+      orderId: reviewData.orderId || reviewData.order_id || '',
+      order_id: reviewData.order_id || reviewData.orderId || '',
+      restaurantId: reviewData.restaurantId || reviewData.restaurant_id || '',
+      restaurantName: reviewData.restaurantName || 'Restaurant',
+      deliveryBoyId: reviewData.deliveryBoyId || reviewData.delivery_boy_id || '',
+      deliveryBoyName: reviewData.deliveryBoyName || 'Delivery Partner',
+      restaurantRating: Number(reviewData.restaurantRating || reviewData.rating || 0),
+      restaurantReview: (reviewData.restaurantReview || reviewData.review || '').trim(),
+      deliveryBoyRating: Number(reviewData.deliveryBoyRating || 0),
+      deliveryBoyReview: (reviewData.deliveryBoyReview || '').trim(),
+      orderDetails: reviewData.orderDetails || []
+    });
+    const saved = await newReview.save();
+    return res.status(201).json({
+      success: true,
+      message: 'Review submitted successfully',
+      review: saved
+    });
+  } catch (error) {
+    console.error('Error saving review to MongoDB:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+app.post('/reviews', handleCreateReview);
+app.post('/api/reviews', handleCreateReview);
+app.post('/reviews/create', handleCreateReview);
+app.post('/reviews/add', handleCreateReview);
+app.post('/reviews/submit', handleCreateReview);
+
 // GET /api/controls/maintenanceMode
 // Returns the maintenanceMode status from the controls collection.
 // status: true  => app is live and running normally
