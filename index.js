@@ -133,6 +133,25 @@ app.get('/api/controls/confirmPayButton', async (req, res) => {
   }
 });
 
+// GET /api/controls/maintenanceMode
+// Returns the maintenanceMode status from the controls collection.
+// status: true  => app is live and running normally
+// status: false => app is under maintenance (blocks UI on the mobile app)
+app.get('/api/controls/maintenanceMode', async (req, res) => {
+  try {
+    const control = await Controls.findOne({ key: 'maintenanceMode' }).lean();
+    return res.status(200).json({
+      success: true,
+      key: 'maintenanceMode',
+      status: control ? Boolean(control.status) : true,  // default true = app is live
+      control
+    });
+  } catch (error) {
+    console.error('Error fetching maintenanceMode control:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Login Endpoint
 app.post('/login', async (req, res) => {
   const { phone, password } = req.body;
