@@ -91,6 +91,8 @@ const feesConfigSchema = new mongoose.Schema({
   isSurgeActive: { type: Boolean, default: false }
 }, { strict: false });
 
+feesConfigSchema.index({ key: 1 });
+
 const FeesConfig = mongoose.model('FeesConfig', feesConfigSchema, 'feesconfigs');
 
 // Controls Schema and Model (mapped to 'controls' collection in MongoDB)
