@@ -86,6 +86,7 @@ const User = mongoose.model('User', userSchema, 'users');
 const feesConfigSchema = new mongoose.Schema({
   key: { type: String, default: 'global' },
   deliveryFeeBase: { type: Number, default: 20 },
+  baseKmThreshold: { type: Number, default: 3 },
   deliveryFeePerKm: { type: Number, default: 10 },
   surgeFee: { type: Number, default: 0 },
   isSurgeActive: { type: Boolean, default: false }
@@ -328,7 +329,7 @@ app.get('/check-phone/:phone', async (req, res) => {
 
 // Signup Endpoint
 app.post('/signup', async (req, res) => {
-  const { phone, password, name, securityAnswer } = req.body;
+  const { phone, password, name, email, securityAnswer } = req.body;
 
   if (!phone || !password || !name) {
     return res.status(400).json({ success: false, message: "Phone, password, and name are required" });
@@ -345,7 +346,7 @@ app.post('/signup', async (req, res) => {
       phone,
       password, // Plaintext to match the existing login logic
       name,
-      email: 'N/A',
+      email: email && email.trim() ? email.trim() : 'N/A',
       isPhoneVerified: false,
       securityAnswer: securityAnswer ? securityAnswer.trim().toLowerCase() : 'n/a',
       savedAddresses: []
@@ -1466,6 +1467,7 @@ app.get('/fees-config', async (req, res) => {
       config = {
         key: 'global',
         deliveryFeeBase: 20,
+        baseKmThreshold: 3,
         deliveryFeePerKm: 10,
         surgeFee: 0,
         isSurgeActive: false,
