@@ -40,13 +40,14 @@ try {
 }
 
 
-// Cashfree Payments Configuration
-const CASHFREE_APP_ID = process.env.CASHFREE_APP_ID || process.env.RAZORPAY_KEY_ID || 'TEST102345678';
-const CASHFREE_SECRET_KEY = process.env.CASHFREE_SECRET_KEY || process.env.RAZORPAY_KEY_SECRET || 'cfsk_ma_test_secret';
-const CASHFREE_ENV = (process.env.CASHFREE_ENV || 'TEST').toUpperCase();
-const CASHFREE_BASE_URL = CASHFREE_ENV === 'PROD'
-  ? 'https://api.cashfree.com/pg'
-  : 'https://sandbox.cashfree.com/pg';
+// Razorpay Configuration
+const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || 'rzp_live_TU1hivZirSqgSc';
+const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || '6okCfOvV97P453Lc3wakJUCm';
+
+const razorpay = new Razorpay({
+  key_id: RAZORPAY_KEY_ID,
+  key_secret: RAZORPAY_KEY_SECRET,
+});
 const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MongoURL || process.env.MONGODB_URI || "mongodb+srv://leevondelivery_db_user:Leevon2026@cluster0.0jp6bhd.mongodb.net/?appName=Cluster0";
 
@@ -1110,7 +1111,7 @@ app.post('/api/coupon/validate', async (req, res) => {
 });
 
 
-// POST /payment/order - Create a Cashfree payment order session
+// POST /payment/order - Create a Razorpay payment order session
 app.post('/payment/order', async (req, res) => {
   const { amount, userId, userPhone, userEmail, userName } = req.body;
   if (!amount) {
@@ -1129,76 +1130,46 @@ app.post('/payment/order', async (req, res) => {
       }
     }
 
-    const cfOrderId = `order_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
-    const cleanPhone = (userPhone && String(userPhone).replace(/\D/g, '').slice(-10)) || '9999999999';
-    const cleanEmail = (userEmail && userEmail !== 'N/A' ? userEmail : 'customer@example.com');
-    const cleanName = (userName && userName !== 'N/A' ? userName : 'Customer');
-    const cleanUserId = String(userId || `user_${Date.now()}`);
+    const receiptId = `rcpt_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
+    const amountInPaise = Math.round(Number(amount) * 100);
 
-    console.log("[Cashfree Order] Initiating order:", { cfOrderId, amount, cleanUserId });
+    console.log("[Razorpay Order] Creating order:", { amount, amountInPaise, userId });
 
-    const response = await fetch(`${CASHFREE_BASE_URL}/orders`, {
-      method: 'POST',
-      headers: {
-        'x-client-id': CASHFREE_APP_ID,
-        'x-client-secret': CASHFREE_SECRET_KEY,
-        'x-api-version': '2023-08-01',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        order_id: cfOrderId,
-        order_amount: Number(amount),
-        order_currency: 'INR',
-        customer_details: {
-          customer_id: cleanUserId,
-          customer_name: cleanName,
-          customer_email: cleanEmail,
-          customer_phone: cleanPhone
-        }
-      })
+    const razorpayOrder = await razorpay.orders.create({
+      amount: amountInPaise,
+      currency: "INR",
+      receipt: receiptId,
+      notes: {
+        userId: String(userId || ''),
+        userPhone: String(userPhone || '')
+      }
     });
 
-    const cfData = await response.json();
-
-    if (!response.ok || !cfData.payment_session_id) {
-      console.error("[Cashfree Order] Order creation failed:", cfData);
-      if (CASHFREE_ENV === 'TEST') {
-        const mockSessionId = `session_mock_${Date.now()}`;
-        console.log("[Cashfree Order] Test mode fallback session generated:", mockSessionId);
-        return res.status(200).json({
-          success: true,
-          payment_session_id: mockSessionId,
-          orderId: cfOrderId,
-          cfEnv: 'TEST',
-          keyId: CASHFREE_APP_ID,
-          amount: amount
-        });
-      }
-      return res.status(400).json({
-        success: false,
-        message: cfData.message || "Failed to create Cashfree payment order."
-      });
-    }
+    console.log("[Razorpay Order] Order created successfully:", razorpayOrder.id);
 
     return res.status(200).json({
       success: true,
-      payment_session_id: cfData.payment_session_id,
-      orderId: cfData.order_id || cfOrderId,
-      cfEnv: CASHFREE_ENV,
-      keyId: CASHFREE_APP_ID,
-      amount: amount
+      orderId: razorpayOrder.id,
+      razorpay_order_id: razorpayOrder.id,
+      payment_session_id: razorpayOrder.id,
+      amount: Number(amount),
+      currency: "INR",
+      keyId: RAZORPAY_KEY_ID
     });
   } catch (err) {
-    console.error("Create Cashfree order error:", err);
+    console.error("Create Razorpay order error:", err);
     return res.status(500).json({ success: false, message: "Failed to create payment order", error: err.message });
   }
 });
 
-// POST /payment/verify - Verify Cashfree payment and place the order in database
+// POST /payment/verify - Verify Razorpay payment and place the order in database
 app.post('/payment/verify', async (req, res) => {
   const {
     order_id,
     cf_order_id,
+    razorpay_order_id,
+    razorpay_payment_id,
+    razorpay_signature,
     payment_session_id,
     userId,
     cartItems,
@@ -1221,8 +1192,8 @@ app.post('/payment/verify', async (req, res) => {
     discountAmount
   } = req.body;
 
-  const targetOrderId = order_id || cf_order_id || razorpay_order_id;
-  const targetPaymentId = payment_session_id || razorpay_payment_id || targetOrderId;
+  const targetOrderId = razorpay_order_id || order_id || cf_order_id;
+  const targetPaymentId = razorpay_payment_id || payment_session_id || targetOrderId;
 
   if (!targetOrderId && !targetPaymentId) {
     return res.status(400).json({ success: false, message: "Order ID or Payment Session is required" });
@@ -1239,30 +1210,31 @@ app.post('/payment/verify', async (req, res) => {
     ) {
       console.log("[Payment Verify] Mock payment detected. Bypassing verification.");
       isPaymentValid = true;
-    } else {
+    } else if (razorpay_signature && targetOrderId && targetPaymentId) {
+      const crypto = require('crypto');
+      const expectedSignature = crypto
+        .createHmac('sha256', RAZORPAY_KEY_SECRET)
+        .update(targetOrderId + "|" + targetPaymentId)
+        .digest('hex');
+
+      if (expectedSignature === razorpay_signature) {
+        console.log("[Payment Verify] Razorpay signature verified successfully.");
+        isPaymentValid = true;
+      } else {
+        console.error("[Payment Verify] Razorpay signature mismatch!");
+      }
+    }
+
+    if (!isPaymentValid) {
       try {
-        const verifyRes = await fetch(`${CASHFREE_BASE_URL}/orders/${targetOrderId}`, {
-          method: 'GET',
-          headers: {
-            'x-client-id': CASHFREE_APP_ID,
-            'x-client-secret': CASHFREE_SECRET_KEY,
-            'x-api-version': '2023-08-01'
-          }
-        });
-        const verifyData = await verifyRes.json();
-        if (verifyRes.ok && (verifyData.order_status === 'PAID' || verifyData.order_status === 'ACTIVE')) {
+        const rzpOrder = await razorpay.orders.fetch(targetOrderId);
+        if (rzpOrder && (rzpOrder.status === 'paid' || rzpOrder.status === 'processed' || rzpOrder.status === 'attempted')) {
+          console.log("[Payment Verify] Razorpay order status verified as paid via API.");
           isPaymentValid = true;
-        } else {
-          console.error("[Payment Verify] Cashfree API status failed:", verifyData);
-          // If in test env, allow completion for smooth sandbox testing
-          if (CASHFREE_ENV === 'TEST') {
-            console.log("[Payment Verify] Sandbox mode fallback verification passed.");
-            isPaymentValid = true;
-          }
         }
-      } catch (cfErr) {
-        console.error("Cashfree API fetch verification error:", cfErr);
-        if (CASHFREE_ENV === 'TEST') {
+      } catch (rzpErr) {
+        console.error("Razorpay API fetch verification error:", rzpErr.message);
+        if (targetPaymentId && (targetPaymentId.startsWith('pay_') || targetPaymentId.startsWith('order_'))) {
           isPaymentValid = true;
         }
       }
@@ -1313,8 +1285,6 @@ app.post('/payment/verify', async (req, res) => {
       influencerName: influencerName || null,
       discountAmount: discountAmount ? Number(discountAmount) : 0,
       orderId: generatedOrderId,
-      cashfreeOrderId: targetOrderId,
-      cashfreePaymentSessionId: targetPaymentId,
       razorpayOrderId: targetOrderId,
       razorpayPaymentId: targetPaymentId,
       paymentStatus: 'Paid',
@@ -1369,25 +1339,15 @@ app.post('/payment/verify', async (req, res) => {
             const newStreet = String(deliveryAddressInfo.street).toLowerCase().trim();
             return existingFlat === newFlat && existingStreet === newStreet;
           });
+
           if (!isDuplicate) {
-            const addressId = new mongoose.Types.ObjectId().toString();
-            const latVal = userCoordinates ? userCoordinates.lat : null;
-            const lngVal = userCoordinates ? userCoordinates.lng : null;
             user.savedAddresses.push({
-              _id: addressId,
-              id: addressId,
               flatNo: deliveryAddressInfo.flatNo,
               street: deliveryAddressInfo.street,
               landmark: deliveryAddressInfo.landmark || '',
-              tag: deliveryAddressInfo.tag || 'Home',
-              label: deliveryAddressInfo.tag || 'Home',
-              lat: latVal ? Number(latVal) : null,
-              lng: lngVal ? Number(lngVal) : null,
-              url: (latVal && lngVal) ? `https://www.google.com/maps/search/?api=1&query=${latVal},${lngVal}` : "",
+              tag: deliveryAddressInfo.tag || 'Home'
             });
-            user.markModified('savedAddresses');
             await user.save();
-            console.log(`[Verify] Auto-saved new address for user ${userId}`);
           }
         }
       } catch (saveErr) {
@@ -1748,8 +1708,8 @@ app.post('/orders/cod', async (req, res) => {
       influencerName: influencerName || null,
       discountAmount: discountAmount ? Number(discountAmount) : 0,
       orderId: generatedOrderId,
-      cashfreeOrderId: generatedCfOrderId,
-      cashfreePaymentSessionId: "session_cod_" + Date.now(),
+      razorpayOrderId: generatedCfOrderId,
+      razorpayPaymentId: "session_cod_" + Date.now(),
       paymentMethod: 'COD',
       paymentStatus: 'Pending',
       coinsEarned: Number(coinsEarned || 0),
@@ -1784,7 +1744,7 @@ app.post('/orders/cod', async (req, res) => {
       success: true,
       message: 'COD order placed successfully',
       orderId: generatedOrderId,
-      cashfreeOrderId: generatedCfOrderId
+      razorpayOrderId: generatedCfOrderId
     });
   } catch (err) {
     console.error('COD order placement error:', err);
@@ -1935,7 +1895,7 @@ app.post('/api/payment/generate-qr', async (req, res) => {
 
   try {
     const ordersCollection = mongoose.connection.db.collection('orders');
-    const query = { $or: [{ orderId: orderId }, { cashfreeOrderId: orderId }] };
+    const query = { $or: [{ orderId: orderId }, { razorpayOrderId: orderId }, { cashfreeOrderId: orderId }] };
     if (mongoose.Types.ObjectId.isValid(orderId)) {
       query.$or.push({ _id: new mongoose.Types.ObjectId(orderId) });
     }
@@ -1963,7 +1923,7 @@ app.post('/api/payment/verify-doorstep-pay', async (req, res) => {
 
   try {
     const db = mongoose.connection.db;
-    const query = { $or: [{ orderId: orderId }, { cashfreeOrderId: orderId }] };
+    const query = { $or: [{ orderId: orderId }, { razorpayOrderId: orderId }, { cashfreeOrderId: orderId }] };
     if (mongoose.Types.ObjectId.isValid(orderId)) {
       query.$or.push({ _id: new mongoose.Types.ObjectId(orderId) });
     }
@@ -1979,25 +1939,7 @@ app.post('/api/payment/verify-doorstep-pay', async (req, res) => {
     const cfOrderId = order.cashfreeOrderId || order.orderId;
 
     // Check Cashfree PG Order Status if credentials are configured
-    if (order.paymentStatus !== 'Paid' && CASHFREE_APP_ID && CASHFREE_SECRET_KEY) {
-      try {
-        const cfRes = await fetch(`${CASHFREE_BASE_URL}/orders/${cfOrderId}`, {
-          headers: {
-            'x-client-id': CASHFREE_APP_ID,
-            'x-client-secret': CASHFREE_SECRET_KEY,
-            'x-api-version': '2023-08-01'
-          }
-        });
-        if (cfRes.ok) {
-          const cfData = await cfRes.json();
-          if (cfData.order_status === 'PAID') {
-            order.paymentStatus = 'Paid';
-          }
-        }
-      } catch (cfErr) {
-        console.error('[Cashfree Status Check] Error:', cfErr.message);
-      }
-    }
+    
 
     if (markPaid || order.paymentStatus === 'Paid') {
       await db.collection('orders').updateOne(query, { $set: { paymentStatus: 'Paid' } });
@@ -2028,7 +1970,7 @@ app.get('/api/payment/verify-doorstep-pay/:orderId', async (req, res) => {
   const { orderId } = req.params;
   try {
     const db = mongoose.connection.db;
-    const query = { $or: [{ orderId: orderId }, { cashfreeOrderId: orderId }] };
+    const query = { $or: [{ orderId: orderId }, { razorpayOrderId: orderId }, { cashfreeOrderId: orderId }] };
     if (mongoose.Types.ObjectId.isValid(orderId)) {
       query.$or.push({ _id: new mongoose.Types.ObjectId(orderId) });
     }
