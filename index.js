@@ -44,10 +44,20 @@ try {
 const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID;
 const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
 
-const razorpay = new Razorpay({
-  key_id: RAZORPAY_KEY_ID,
-  key_secret: RAZORPAY_KEY_SECRET,
-});
+let razorpay = null;
+if (RAZORPAY_KEY_ID && RAZORPAY_KEY_SECRET) {
+  try {
+    razorpay = new Razorpay({
+      key_id: RAZORPAY_KEY_ID,
+      key_secret: RAZORPAY_KEY_SECRET,
+    });
+    console.log('Razorpay initialized successfully.');
+  } catch (rzpErr) {
+    console.error('Razorpay initialization error:', rzpErr.message);
+  }
+} else {
+  console.warn('Razorpay KEY_ID/KEY_SECRET not set in environment variables.');
+}
 const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MongoURL || process.env.MONGODB_URI;
 
