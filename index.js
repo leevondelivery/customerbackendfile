@@ -41,15 +41,15 @@ try {
 
 
 // Razorpay Configuration
-const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || 'rzp_live_TU1hivZirSqgSc';
-const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || '6okCfOvV97P453Lc3wakJUCm';
+const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID;
+const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
 
 const razorpay = new Razorpay({
   key_id: RAZORPAY_KEY_ID,
   key_secret: RAZORPAY_KEY_SECRET,
 });
 const PORT = process.env.PORT || 5000;
-const MONGODB_URI = process.env.MongoURL || process.env.MONGODB_URI || "mongodb+srv://leevondelivery_db_user:Leevon2026@cluster0.0jp6bhd.mongodb.net/?appName=Cluster0";
+const MONGODB_URI = process.env.MongoURL || process.env.MONGODB_URI;
 
 app.use(cors());
 app.use(express.json());
@@ -1366,6 +1366,119 @@ app.post('/payment/verify', async (req, res) => {
   }
 });
 
+// ==========================================
+// RAZORPAY WEBHOOK ENDPOINTS
+// Live URL: https://customerbackendfile.onrender.com/api/razorpay-webhook
+// Live URL: https://customerbackendfile.onrender.com/razorpay-webhook
+// ==========================================
+const handleRazorpayWebhook = async (req, res) => {
+  try {
+    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || process.env.RAZORPAY_KEY_SECRET;
+    const razorpaySignature = req.headers['x-razorpay-signature'];
+
+    if (!razorpaySignature) {
+      console.error('[Razorpay Webhook] Missing x-razorpay-signature header');
+      return res.status(400).json({ success: false, message: 'Missing signature' });
+    }
+
+    // Verify signature using HMAC SHA256
+    const crypto = require('crypto');
+    const expectedSignature = crypto
+      .createHmac('sha256', webhookSecret)
+      .update(JSON.stringify(req.body))
+      .digest('hex');
+
+    if (expectedSignature !== razorpaySignature) {
+      console.error('[Razorpay Webhook] Webhook signature mismatch!');
+      return res.status(400).json({ success: false, message: 'Signature mismatch' });
+    }
+
+    const { event, payload } = req.body;
+    console.log(`[Razorpay Webhook] Verified event received: ${event}`);
+
+    const db = mongoose.connection.db;
+    const ordersCollection = db.collection('orders');
+    const orderStatusesCollection = db.collection('orderstatuses');
+
+    if (event === 'payment.captured' || event === 'order.paid') {
+      const payment = payload.payment.entity;
+      const rzpOrderId = payment.order_id;
+      const paymentId = payment.id;
+
+      console.log(`[Razorpay Webhook] Payment SUCCESS for Order ${rzpOrderId}, Payment ID: ${paymentId}`);
+
+      // Update orders collection
+      await ordersCollection.updateMany(
+        {
+          $or: [
+            { razorpayOrderId: rzpOrderId },
+            { razorpay_order_id: rzpOrderId },
+            { orderId: rzpOrderId }
+          ]
+        },
+        {
+          $set: {
+            paymentStatus: 'Paid',
+            status: 'PAID',
+            razorpayPaymentId: paymentId,
+            razorpay_payment_id: paymentId,
+            paidAt: new Date()
+          }
+        }
+      );
+
+      // Update orderstatuses collection
+      await orderStatusesCollection.updateMany(
+        {
+          $or: [
+            { razorpayOrderId: rzpOrderId },
+            { razorpay_order_id: rzpOrderId },
+            { orderId: rzpOrderId }
+          ]
+        },
+        {
+          $set: {
+            paymentStatus: 'Paid',
+            status: 'waiting for the restaurent to accept',
+            razorpayPaymentId: paymentId,
+            razorpay_payment_id: paymentId,
+            paidAt: new Date()
+          }
+        }
+      );
+    } else if (event === 'payment.failed') {
+      const payment = payload.payment.entity;
+      const rzpOrderId = payment.order_id;
+
+      console.warn(`[Razorpay Webhook] Payment FAILED for Order ${rzpOrderId}`);
+
+      await ordersCollection.updateMany(
+        {
+          $or: [
+            { razorpayOrderId: rzpOrderId },
+            { razorpay_order_id: rzpOrderId }
+          ]
+        },
+        {
+          $set: {
+            paymentStatus: 'FAILED',
+            failureReason: payment.error_description || 'Payment Failed'
+          }
+        }
+      );
+    }
+
+    return res.status(200).json({ status: 'ok' });
+  } catch (err) {
+    console.error('[Razorpay Webhook] Error processing webhook:', err);
+    return res.status(500).json({ success: false, message: 'Error processing webhook', error: err.message });
+  }
+};
+
+app.post('/api/razorpay-webhook', handleRazorpayWebhook);
+app.post('/razorpay-webhook', handleRazorpayWebhook);
+
+
 const https = require('https');
 
 const fetchRoutesDistance = (originLat, originLng, destLat, destLng, apiKey) => {
@@ -1990,4 +2103,98 @@ app.get('/api/payment/verify-doorstep-pay/:orderId', async (req, res) => {
   } catch (err) {
     return res.status(500).json({ success: false, message: 'Error checking payment status' });
   }
+});
+
+// GET /api/payment/razorpay-checkout/:orderId - Serve official Razorpay Checkout Page
+app.get('/api/payment/razorpay-checkout/:orderId', async (req, res) => {
+  const { orderId } = req.params;
+  const amount = req.query.amount || '100';
+  const name = req.query.name || 'Customer';
+  const email = req.query.email || 'customer@example.com';
+  const phone = req.query.phone || '9999999999';
+  const keyId = RAZORPAY_KEY_ID;
+  const amountInPaise = Math.round(Number(amount) * 100);
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Leevon Delivery Payment</title>
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+  <style>
+    body, html { margin: 0; padding: 0; width: 100%; height: 100%; font-family: sans-serif; background: #F9F9F6; display: flex; justify-content: center; align-items: center; }
+    .card { background: #FFFFFF; border-radius: 20px; padding: 30px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 85%; max-width: 320px; }
+    .btn { background: #27AE60; color: #FFFFFF; border: none; padding: 14px 28px; border-radius: 25px; font-size: 16px; font-weight: bold; width: 100%; cursor: pointer; margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h3 style="margin-top:0; color:#1E3545;">Leevon Delivery</h3>
+    <p style="color:#666666; font-size:14px;">Order Amount: &#8377;${amount}</p>
+    <button id="pay-btn" class="btn">Pay Now with Razorpay</button>
+  </div>
+  <script>
+    const options = {
+      key: "${keyId}",
+      amount: ${amountInPaise},
+      currency: "INR",
+      name: "Leevon Delivery",
+      description: "Order #${orderId}",
+      order_id: "${orderId}",
+      prefill: { name: "${name}", email: "${email}", contact: "${phone}" },
+      theme: { color: "#27AE60" },
+      handler: function(response) {
+        window.location.href = "/api/payment/razorpay-success?razorpay_order_id=" + response.razorpay_order_id + "&razorpay_payment_id=" + response.razorpay_payment_id + "&razorpay_signature=" + response.razorpay_signature;
+      },
+      modal: {
+        ondismiss: function() {
+          window.location.href = "/api/payment/razorpay-cancel";
+        }
+      }
+    };
+    const rzp = new Razorpay(options);
+    document.getElementById('pay-btn').onclick = function() { rzp.open(); };
+    window.onload = function() { rzp.open(); };
+  </script>
+</body>
+</html>`;
+  res.setHeader('Content-Type', 'text/html');
+  return res.send(html);
+});
+
+// GET /api/payment/razorpay-success
+app.get('/api/payment/razorpay-success', (req, res) => {
+  const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.query;
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Payment Successful</title>
+  <style>
+    body { font-family: sans-serif; background: #F9F9F6; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; text-align: center; }
+    .card { background: #fff; padding: 30px; border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 85%; max-width: 320px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2 style="color: #27AE60;">Payment Successful!</h2>
+    <p>Please return to the Leevon Delivery app.</p>
+  </div>
+  <script>
+    setTimeout(function() {
+      if (window.opener) window.close();
+    }, 2000);
+  </script>
+</body>
+</html>`;
+  res.setHeader('Content-Type', 'text/html');
+  return res.send(html);
+});
+
+// GET /api/payment/razorpay-cancel
+app.get('/api/payment/razorpay-cancel', (req, res) => {
+  res.setHeader('Content-Type', 'text/html');
+  return res.send('<html><body style="font-family:sans-serif; text-align:center; padding-top:50px;"><h3>Payment Cancelled</h3><p>You can close this window and return to the app.</p></body></html>');
 });
