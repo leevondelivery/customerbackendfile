@@ -509,7 +509,8 @@ app.post('/login/google', async (req, res) => {
   }
 
   try {
-    const decodedToken = await getAuth().verifyIdToken(idToken);
+      const authObj = firebaseApp ? getAuth(firebaseApp) : getAuth();
+      const decodedToken = await authObj.verifyIdToken(idToken);
     const { email, name, uid } = decodedToken;
 
     if (!email) {
@@ -549,7 +550,7 @@ app.post('/login/google', async (req, res) => {
 
   } catch (err) {
     console.error("Google login route error:", err);
-    return res.status(401).json({ success: false, message: "Invalid or expired Google Token" });
+    return res.status(401).json({ success: false, message: err.message || "Invalid or expired Google Token" });
   }
 });
 
