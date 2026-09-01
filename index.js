@@ -907,12 +907,15 @@ app.get('/orderstatus/user/:userid', async (req, res) => {
   try {
     const query = {
       $or: [
-        { userId: userid }
+        { userId: userid },
+        { user_id: userid },
+        { customerId: userid }
       ]
     };
 
     if (mongoose.Types.ObjectId.isValid(userid)) {
-      query.$or.push({ userId: new mongoose.Types.ObjectId(userid) });
+      const objId = new mongoose.Types.ObjectId(userid);
+      query.$or.push({ userId: objId }, { user_id: objId }, { customerId: objId });
     }
 
     const orderStatusesCollection = mongoose.connection.db.collection('orderstatuses');
@@ -1647,13 +1650,20 @@ app.get(['/orders/completed/:userid', '/orders/completed/user/:userid'], async (
     }
 
     const ordersCollection = mongoose.connection.db.collection('orders');
+    const compQuery = {
+      $or: [
+        { userId: String(userid) },
+        { user_id: String(userid) },
+        { customerId: String(userid) }
+      ]
+    };
+    if (mongoose.Types.ObjectId.isValid(userid)) {
+      const objId = new mongoose.Types.ObjectId(userid);
+      compQuery.$or.push({ userId: objId }, { user_id: objId }, { customerId: objId });
+    }
+
     const userOrders = await ordersCollection
-      .find({
-        $or: [
-          { userId: String(userid) },
-          { user_id: String(userid) }
-        ]
-      })
+      .find(compQuery)
       .sort({ createdAt: -1 })
       .toArray();
 
