@@ -1065,7 +1065,13 @@ app.get('/restaurants/:restaurantId/menu', async (req, res) => {
       const collections = await db.listCollections().toArray();
       for (const colInfo of collections) {
         const col = db.collection(colInfo.name);
-        const doc = await col.findOne({ restaurantId });
+        const doc = await col.findOne({
+            $or: [
+              { restaurantId: String(restaurantId) },
+              { restId: String(restaurantId) },
+              { _id: String(restaurantId) }
+            ]
+          });
         if (doc) {
           collectionName = colInfo.name;
           restaurantIdToCollectionMap[restaurantId] = collectionName;
