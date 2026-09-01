@@ -186,14 +186,27 @@ const Review = mongoose.model('Review', reviewSchema, 'reviews');
 // Review Endpoints
 const handleGetUserReviews = async (req, res) => {
   try {
-    const { userId } = req.params;
-    const userReviews = await Review.find({
-      $or: [{ userId: userId }, { user_id: userId }]
-    }).sort({ createdAt: -1 }).lean();
+    const finalId = req.params.userId || req.params.userid;
+    if (!finalId) {
+      return res.status(400).json({ success: false, message: 'User ID is required' });
+    }
+
+    const orConditions = [
+      { userId: String(finalId) },
+      { user_id: String(finalId) },
+      { customerId: String(finalId) }
+    ];
+
+    if (mongoose.Types.ObjectId.isValid(finalId)) {
+      const objId = new mongoose.Types.ObjectId(finalId);
+      orConditions.push({ userId: objId }, { user_id: objId }, { customerId: objId });
+    }
+
+    const userReviews = await Review.find({ $or: orConditions }).sort({ createdAt: -1 }).lean();
 
     return res.status(200).json({
       success: true,
-      reviews: userReviews
+      reviews: userReviews || []
     });
   } catch (error) {
     console.error('Error fetching user reviews from MongoDB:', error);
