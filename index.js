@@ -77,8 +77,19 @@ app.use((req, res, next) => {
 
 // MongoDB Connection
 mongoose.connect(MONGODB_URI)
-  .then(() => {
+  .then(async () => {
     console.log("Connected to MongoDB Atlas successfully");
+    try {
+      const db = mongoose.connection.db;
+      await Promise.all([
+        db.collection('orderstatuses').createIndex({ userId: 1, orderDate: -1, createdAt: -1 }),
+        db.collection('orders').createIndex({ userId: 1 }),
+        db.collection('reviews').createIndex({ userId: 1 })
+      ]);
+      console.log("[MongoDB] Performance indexes ensured for orderstatuses, orders, reviews");
+    } catch (e) {
+      console.warn("[MongoDB] Index creation warning:", e.message);
+    }
   })
   .catch(err => console.error("MongoDB connection error:", err));
 
