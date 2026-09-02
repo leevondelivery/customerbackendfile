@@ -400,6 +400,42 @@ app.post('/signup', async (req, res) => {
   }
 });
 
+// GET /check-phone/:phone - Check if phone number is already linked to another account
+app.get('/check-phone/:phone', async (req, res) => {
+  const { phone } = req.params;
+  const excludeUserId = req.query.excludeUserId;
+
+  if (!phone) {
+    return res.status(400).json({ success: false, message: "Phone number is required" });
+  }
+
+  try {
+    const cleanPhone = String(phone).trim().replace(/\D/g, '').slice(-10);
+    const query = {
+      phone: { $regex: cleanPhone }
+    };
+
+    if (excludeUserId && String(excludeUserId).trim() && String(excludeUserId).trim() !== 'null' && String(excludeUserId).trim() !== 'undefined') {
+      const exId = String(excludeUserId).trim();
+      if (mongoose.Types.ObjectId.isValid(exId)) {
+        query._id = { $ne: new mongoose.Types.ObjectId(exId) };
+      } else {
+        query._id = { $ne: exId };
+      }
+    }
+
+    const existingUser = await User.findOne(query).lean();
+    if (existingUser) {
+      return res.status(200).json({ success: true, exists: true, message: "Phone number already linked to another account" });
+    }
+
+    return res.status(200).json({ success: true, exists: false, message: "Phone number available" });
+  } catch (err) {
+    console.error("GET /check-phone error:", err);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
 // Check Phone Endpoint for Forgot Password
 app.post('/forgot-password/check-phone', async (req, res) => {
   const { phone } = req.body;
@@ -2305,8 +2341,4 @@ app.get('/api/payment/razorpay-success', (req, res) => {
   return res.send(html);
 });
 
-// GET /api/payment/razorpay-cancel
-app.get('/api/payment/razorpay-cancel', (req, res) => {
-  res.setHeader('Content-Type', 'text/html');
-  return res.send('<html><body style="font-family:sans-serif; text-align:center; padding-top:50px;"><h3>Payment Cancelled</h3><p>You can close this window and return to the app.</p></body></html>');
-});
+// GET /api/payment/razorpay-cancel
