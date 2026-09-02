@@ -931,16 +931,38 @@ app.get('/orderstatus/user/:userid', async (req, res) => {
       query.$or.push({ userId: objId }, { user_id: objId }, { customerId: objId });
     }
 
-    const orderStatusesCollection = mongoose.connection.db.collection('orderstatuses');
+    const db = mongoose.connection.db;
 
-    // Query orderstatuses for the latest document matching the user
-    const latestStatus = await orderStatusesCollection
+    // 1. Query orderstatuses collection
+    const latestStatusDoc = await db.collection('orderstatuses')
       .find(query)
-      .sort({ orderDate: -1, createdAt: -1 })
+      .sort({ orderDate: -1, createdAt: -1, _id: -1 })
       .limit(1)
       .next();
 
-    return res.status(200).json({ success: true, orderStatus: latestStatus || null });
+    // 2. Query acceptedbydeliveries collection for delivery/restaurant updates
+    const latestAcceptedDoc = await db.collection('acceptedbydeliveries')
+      .find(query)
+      .sort({ orderDate: -1, createdAt: -1, _id: -1 })
+      .limit(1)
+      .next();
+
+    // 3. Query orders collection
+    const latestOrderDoc = await db.collection('orders')
+      .find(query)
+      .sort({ orderDate: -1, createdAt: -1, _id: -1 })
+      .limit(1)
+      .next();
+
+    let finalStatusDoc = latestStatusDoc || latestAcceptedDoc || latestOrderDoc;
+
+    if (latestAcceptedDoc && latestAcceptedDoc.status && !String(latestAcceptedDoc.status).toLowerCase().includes('waiting for the restaurent')) {
+      finalStatusDoc = { ...latestStatusDoc, ...latestAcceptedDoc };
+    } else if (latestOrderDoc && latestOrderDoc.status && !String(latestOrderDoc.status).toLowerCase().includes('waiting for the restaurent')) {
+      finalStatusDoc = { ...latestStatusDoc, ...latestOrderDoc };
+    }
+
+    return res.status(200).json({ success: true, orderStatus: finalStatusDoc || null });
 
   } catch (err) {
     console.error("Get order status error:", err);
