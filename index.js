@@ -378,7 +378,7 @@ app.post('/signup', async (req, res) => {
       password, // Plaintext to match the existing login logic
       name,
       email: email && email.trim() ? email.trim() : 'N/A',
-      isPhoneVerified: false,
+      isPhoneVerified: req.body.isPhoneVerified === true || req.body.isPhoneVerified === 'true' || req.body.isPhoneVerified === 1,
       securityAnswer: securityAnswer ? securityAnswer.trim().toLowerCase() : 'n/a',
       savedAddresses: []
     });
@@ -842,6 +842,37 @@ app.get('/reviews/user/:userId', async (req, res) => {
 });
 
 // PUT /user/update Endpoint
+
+// POST /user/verify-phone - Verify phone number and update DB
+app.post('/user/verify-phone', async (req, res) => {
+  const { phone, userid } = req.body;
+  if (!phone && !userid) {
+    return res.status(400).json({ success: false, message: 'Phone or User ID is required' });
+  }
+  try {
+    const query = userid ? { _id: userid } : { phone };
+    const updatedUser = await User.findOneAndUpdate(
+      query,
+      { isPhoneVerified: true },
+      { new: true }
+    ).lean();
+
+    if (!updatedUser) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    const { password: _, ...userData } = updatedUser;
+    return res.status(200).json({
+      success: true,
+      message: 'Phone number verified successfully',
+      user: userData
+    });
+  } catch (err) {
+    console.error('Verify phone route error:', err);
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
 app.put('/user/update', async (req, res) => {
   const { userid, email, dateOfBirth, phone, isPhoneVerified } = req.body;
 
