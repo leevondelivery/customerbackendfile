@@ -271,27 +271,67 @@ app.post('/reviews/create', handleCreateReview);
 app.post('/reviews/add', handleCreateReview);
 app.post('/reviews/submit', handleCreateReview);
 
-// Orders Completed Endpoint
+// Orders Completed Endpoint (fetches completed & rejected orders from finalcompletedorders and rejectedorders)
 const handleGetCompletedOrders = async (req, res) => {
   try {
-    const { userId } = req.params;
-    const ordersCollection = mongoose.connection.db.collection('orders');
-    const userOrders = await ordersCollection.find({
-      $or: [{ userId: userId }, { user_id: userId }, { customerId: userId }]
-    }).sort({ createdAt: -1 }).toArray();
+    const userId = req.params.userId || req.params.userid;
 
-    return res.status(200).json({
-      success: true,
-      orders: userOrders || []
+    if (!userId) {
+      return res.status(400).json({ success: false, message: 'User ID is required' });
+    }
+
+    const ordersCollection = mongoose.connection.db.collection('finalcompletedorders');
+    const rejectedCollection = mongoose.connection.db.collection('rejectedorders');
+    console.log(`[GET /orders/completed/${userId}] Request received.`);
+
+    const query = {
+      $or: [
+        { userId: String(userId) },
+        { user_id: String(userId) },
+        { customerId: String(userId) }
+      ]
+    };
+
+    if (mongoose.Types.ObjectId.isValid(userId)) {
+      const objId = new mongoose.Types.ObjectId(userId);
+      query.$or.push({ userId: objId }, { user_id: objId }, { customerId: objId });
+    }
+
+    console.log(`[GET /orders/completed/${userId}] Querying database:`, JSON.stringify(query));
+
+    const [completedOrders, rejectedOrders] = await Promise.all([
+      ordersCollection.find(query).toArray(),
+      rejectedCollection.find(query).toArray()
+    ]);
+
+    const formattedCompleted = (completedOrders || []).map(order => ({
+      ...order,
+      status: order.status || 'Completed',
+      isRejected: false
+    }));
+
+    const formattedRejected = (rejectedOrders || []).map(order => ({
+      ...order,
+      status: order.status || 'Rejected',
+      isRejected: true
+    }));
+
+    const combinedOrders = [...formattedCompleted, ...formattedRejected].sort((a, b) => {
+      const dateA = new Date(a.orderDate || a.completedAt || a.createdAt || 0);
+      const dateB = new Date(b.orderDate || b.completedAt || b.createdAt || 0);
+      return dateB - dateA;
     });
+
+    return res.status(200).json({ success: true, orders: combinedOrders });
   } catch (error) {
     console.error('Error fetching completed orders:', error);
-    return res.status(200).json({ success: true, orders: [] });
+    return res.status(500).json({ success: false, message: 'Failed to fetch completed orders', error: error.message });
   }
 };
 
 app.get('/orders/completed/:userId', handleGetCompletedOrders);
 app.get('/api/orders/completed/:userId', handleGetCompletedOrders);
+app.get('/orders/completed/user/:userId', handleGetCompletedOrders);
 
 // GET /api/controls/maintenanceMode
 // Returns the maintenanceMode status from the controls collection.
@@ -777,62 +817,6 @@ app.get('/carousel', async (req, res) => {
   }
 });
 
-
-// GET /orders/completed/:userId Endpoint (fetches completed & rejected orders)
-app.get('/orders/completed/:userId', async (req, res) => {
-  const { userId } = req.params;
-
-  if (!userId) {
-    return res.status(400).json({ success: false, message: "User ID is required" });
-  }
-
-  try {
-    const ordersCollection = mongoose.connection.db.collection('finalcompletedorders');
-    const rejectedCollection = mongoose.connection.db.collection('rejectedorders');
-    console.log(`[GET /orders/completed/${userId}] Request received.`);
-    const query = {
-      $or: [
-        { userId: userId }
-      ]
-    };
-
-    if (mongoose.Types.ObjectId.isValid(userId)) {
-      query.$or.push({ userId: new mongoose.Types.ObjectId(userId) });
-    }
-
-    console.log(`[GET /orders/completed/${userId}] Querying database:`, JSON.stringify(query));
-
-    // Fetch orders from both finalcompletedorders and rejectedorders collections
-    const [completedOrders, rejectedOrders] = await Promise.all([
-      ordersCollection.find(query).toArray(),
-      rejectedCollection.find(query).toArray()
-    ]);
-
-    const formattedCompleted = completedOrders.map(order => ({
-      ...order,
-      status: order.status || 'Completed',
-      isRejected: false
-    }));
-
-    const formattedRejected = rejectedOrders.map(order => ({
-      ...order,
-      status: order.status || 'Rejected',
-      isRejected: true
-    }));
-
-    // Combine and sort by date descending (newest first)
-    const combinedOrders = [...formattedCompleted, ...formattedRejected].sort((a, b) => {
-      const dateA = new Date(a.orderDate || a.completedAt || a.createdAt || 0);
-      const dateB = new Date(b.orderDate || b.completedAt || b.createdAt || 0);
-      return dateB - dateA;
-    });
-
-    return res.status(200).json({ success: true, orders: combinedOrders });
-  } catch (err) {
-    console.error("Get completed and rejected orders error:", err);
-    return res.status(500).json({ success: false, message: "Internal server error" });
-  }
-});
 
 // GET /reviews/user/:userId Endpoint
 app.get('/reviews/user/:userId', async (req, res) => {
@@ -1742,46 +1726,6 @@ app.get('/fees-config', async (req, res) => {
   } catch (err) {
     console.error("Get fees config error:", err);
     return res.status(500).json({ success: false, message: "Internal server error" });
-  }
-});
-
-// ==========================================
-// COMPLETED ORDERS ENDPOINT (MongoDB 'orders' Collection)
-// ==========================================
-
-// GET /orders/completed/:userid - Fetch completed orders for a user
-app.get(['/orders/completed/:userid', '/orders/completed/user/:userid'], async (req, res) => {
-  try {
-    const { userid } = req.params;
-    if (!userid) {
-      return res.status(400).json({ success: false, message: 'User ID is required' });
-    }
-
-    const ordersCollection = mongoose.connection.db.collection('orders');
-    const compQuery = {
-      $or: [
-        { userId: String(userid) },
-        { user_id: String(userid) },
-        { customerId: String(userid) }
-      ]
-    };
-    if (mongoose.Types.ObjectId.isValid(userid)) {
-      const objId = new mongoose.Types.ObjectId(userid);
-      compQuery.$or.push({ userId: objId }, { user_id: objId }, { customerId: objId });
-    }
-
-    const userOrders = await ordersCollection
-      .find(compQuery)
-      .sort({ createdAt: -1 })
-      .toArray();
-
-    return res.status(200).json({
-      success: true,
-      orders: userOrders || []
-    });
-  } catch (err) {
-    console.error('Error fetching completed orders:', err);
-    return res.status(500).json({ success: false, message: 'Failed to fetch completed orders', error: err.message });
   }
 });
 
