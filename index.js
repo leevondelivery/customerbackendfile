@@ -271,7 +271,7 @@ app.post('/reviews/create', handleCreateReview);
 app.post('/reviews/add', handleCreateReview);
 app.post('/reviews/submit', handleCreateReview);
 
-// Orders Completed Endpoint (fetches completed & rejected orders from finalcompletedorders and rejectedorders)
+// Orders Completed Endpoint (fetches completed orders from finalcompletedorders collection)
 const handleGetCompletedOrders = async (req, res) => {
   try {
     const userId = req.params.userId || req.params.userid;
@@ -281,7 +281,6 @@ const handleGetCompletedOrders = async (req, res) => {
     }
 
     const ordersCollection = mongoose.connection.db.collection('finalcompletedorders');
-    const rejectedCollection = mongoose.connection.db.collection('rejectedorders');
     console.log(`[GET /orders/completed/${userId}] Request received.`);
 
     const query = {
@@ -299,10 +298,7 @@ const handleGetCompletedOrders = async (req, res) => {
 
     console.log(`[GET /orders/completed/${userId}] Querying database:`, JSON.stringify(query));
 
-    const [completedOrders, rejectedOrders] = await Promise.all([
-      ordersCollection.find(query).toArray(),
-      rejectedCollection.find(query).toArray()
-    ]);
+    const completedOrders = await ordersCollection.find(query).toArray();
 
     const formattedCompleted = (completedOrders || []).map(order => ({
       ...order,
@@ -310,19 +306,13 @@ const handleGetCompletedOrders = async (req, res) => {
       isRejected: false
     }));
 
-    const formattedRejected = (rejectedOrders || []).map(order => ({
-      ...order,
-      status: order.status || 'Rejected',
-      isRejected: true
-    }));
-
-    const combinedOrders = [...formattedCompleted, ...formattedRejected].sort((a, b) => {
+    formattedCompleted.sort((a, b) => {
       const dateA = new Date(a.orderDate || a.completedAt || a.createdAt || 0);
       const dateB = new Date(b.orderDate || b.completedAt || b.createdAt || 0);
       return dateB - dateA;
     });
 
-    return res.status(200).json({ success: true, orders: combinedOrders });
+    return res.status(200).json({ success: true, orders: formattedCompleted });
   } catch (error) {
     console.error('Error fetching completed orders:', error);
     return res.status(500).json({ success: false, message: 'Failed to fetch completed orders', error: error.message });
