@@ -1427,16 +1427,7 @@ app.post('/payment/verify', async (req, res) => {
     };
     await orderStatusesCollection.insertOne(statusDocument);
 
-    if (userId && coinsEarned > 0) {
-      try {
-        await User.findByIdAndUpdate(userId, {
-          $inc: { coins: Number(coinsEarned) }
-        });
-        console.log(`[Verify] Added ${coinsEarned} coins to user ${userId}`);
-      } catch (coinErr) {
-        console.error("Failed to update user coins in database:", coinErr);
-      }
-    }
+    // Note: Coins will be awarded ONLY when order moves to finalcompletedorders collection
 
     if (userId && deliveryAddressInfo && deliveryAddressInfo.flatNo && deliveryAddressInfo.street) {
       try {
