@@ -1201,7 +1201,7 @@ app.get('/restaurants/:restaurantId/menu', async (req, res) => {
 
 // POST /api/coupon/validate - Validate coupon code and calculate discount
 app.post('/api/coupon/validate', async (req, res) => {
-  const { couponCode, cartTotal } = req.body;
+  const { couponCode, cartTotal, userId, userPhone } = req.body;
 
   if (!couponCode) {
     return res.status(400).json({ success: false, message: "Coupon code is required" });
@@ -1216,6 +1216,22 @@ app.post('/api/coupon/validate', async (req, res) => {
 
     if (!coupon) {
       return res.status(404).json({ success: false, message: "Invalid or expired coupon code" });
+    }
+
+    // Single-use per customer check
+    const targetUid = userId ? String(userId).trim() : null;
+    const targetPhone = userPhone ? String(userPhone).trim() : null;
+    if (targetUid || targetPhone) {
+      const existingUsage = await mongoose.connection.db.collection('couponusages').findOne({
+        couponCode: coupon.couponCode,
+        $or: [
+          ...(targetUid ? [{ userId: targetUid }] : []),
+          ...(targetPhone ? [{ userPhone: targetPhone }] : [])
+        ]
+      });
+      if (existingUsage) {
+        return res.status(400).json({ success: false, message: "You have already used this coupon code." });
+      }
     }
 
     const discountType = coupon.discountType || 'flat';
@@ -1446,6 +1462,16 @@ app.post('/payment/verify', async (req, res) => {
     };
 
     await ordersCollection.insertOne(orderDocument);
+
+    if (couponCode && (userId || userPhone)) {
+      await mongoose.connection.db.collection('couponusages').insertOne({
+        couponCode: String(couponCode).trim().toUpperCase(),
+        userId: userId ? String(userId).trim() : null,
+        userPhone: userPhone ? String(userPhone).trim() : null,
+        orderId: typeof generatedOrderId !== 'undefined' ? generatedOrderId : (orderDocument.orderId || null),
+        usedAt: new Date()
+      }).catch(e => console.warn('[Coupon] Failed to record usage:', e.message));
+    }
 
     const orderStatusesCollection = mongoose.connection.db.collection('orderstatuses');
     const statusDocument = {
@@ -1945,6 +1971,16 @@ app.post('/orders/cod', async (req, res) => {
     };
 
     await ordersCollection.insertOne(orderDocument);
+
+    if (couponCode && (userId || userPhone)) {
+      await mongoose.connection.db.collection('couponusages').insertOne({
+        couponCode: String(couponCode).trim().toUpperCase(),
+        userId: userId ? String(userId).trim() : null,
+        userPhone: userPhone ? String(userPhone).trim() : null,
+        orderId: typeof generatedOrderId !== 'undefined' ? generatedOrderId : (orderDocument.orderId || null),
+        usedAt: new Date()
+      }).catch(e => console.warn('[Coupon] Failed to record usage:', e.message));
+    }
 
     const orderStatusesCollection = mongoose.connection.db.collection('orderstatuses');
     const statusDocument = {
