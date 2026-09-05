@@ -1,3 +1,21 @@
+const checkIsUserBlocked = (user) => {
+  if (!user || typeof user !== 'object') return false;
+  return (
+    user.isBlocked === true ||
+    String(user.isBlocked).toLowerCase() === 'true' ||
+    user.is_blocked === true ||
+    String(user.is_blocked).toLowerCase() === 'true' ||
+    user.blocked === true ||
+    String(user.blocked).toLowerCase() === 'true' ||
+    String(user.status || '').toLowerCase() === 'blocked' ||
+    String(user.status || '').toLowerCase() === 'inactive' ||
+    user.isActive === false ||
+    String(user.isActive).toLowerCase() === 'false' ||
+    user.is_active === false ||
+    String(user.is_active).toLowerCase() === 'false'
+  );
+};
+
 require('dotenv').config();
 const QRCode = require('qrcode');
 const express = require('express');
@@ -608,6 +626,15 @@ app.post('/login/google', async (req, res) => {
     }
 
     let user = await User.findOne({ email }).lean();
+
+    if (user && checkIsUserBlocked(user)) {
+      console.warn(`[Google Login Blocked] User "${email}" is blocked by admin.`);
+      return res.status(403).json({
+        success: false,
+        isBlocked: true,
+        message: "Your account has been blocked by admin. Please contact support."
+      });
+    }
 
     if (!user) {
       // Register user in MongoDB (with unique temporary phone value to avoid unique index duplicate error)
