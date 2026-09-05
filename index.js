@@ -1219,7 +1219,7 @@ app.post('/api/coupon/validate', async (req, res) => {
     }
 
     if (coupon.isActive === false || coupon.status === 'inactive' || coupon.status === 'off' || String(coupon.isActive) === 'false') {
-      return res.status(400).json({ success: false, message: "This coupon code is currently turned OFF." });
+      return res.status(404).json({ success: false, message: "Invalid or expired coupon code." });
     }
 
     // Single-use per customer check
