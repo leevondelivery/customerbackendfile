@@ -1065,6 +1065,16 @@ app.get('/orderstatus/user/:userid', async (req, res) => {
       console.warn('[OrderStatus] Completed query error:', compErr.message);
     }
 
+    const getItemTime = (doc) => {
+      if (!doc) return 0;
+      const d = doc.completedAt || doc.rejectedAt || doc.orderDate || doc.createdAt || doc.date || 0;
+      const t = new Date(d).getTime();
+      return isNaN(t) ? 0 : t;
+    };
+
+    const rejTime = getItemTime(latestRejectedDoc);
+    const compTime = getItemTime(latestCompletedDoc);
+
     // Resolve which document is truly active / current
     let finalStatusDoc = null;
 
@@ -1099,10 +1109,9 @@ app.get('/orderstatus/user/:userid', async (req, res) => {
       }
     }
 
-    // C. If still no active doc, check if there is a recent rejected order
+    // C. If still no active doc, check if rejected order is NEWER than completed order
     if (!finalStatusDoc && latestRejectedDoc) {
-      const rejTime = new Date(latestRejectedDoc.rejectedAt || latestRejectedDoc.orderDate || latestRejectedDoc.createdAt || Date.now()).getTime();
-      if (Date.now() - rejTime < 24 * 60 * 60 * 1000) {
+      if (rejTime > compTime && (Date.now() - rejTime < 24 * 60 * 60 * 1000)) {
         finalStatusDoc = {
           ...latestRejectedDoc,
           status: 'rejected',
