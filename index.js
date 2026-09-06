@@ -1465,7 +1465,7 @@ app.post('/payment/verify', async (req, res) => {
       razorpayOrderId: targetOrderId,
       razorpayPaymentId: targetPaymentId,
       paymentStatus: 'Paid',
-      coinsEarned: Number(coinsEarned || 0),
+      coinsEarned: await computeCoinsEarnedForOrder(totalPrice, grandTotal, coinsEarned || req.body.coins),
       userName: userName || '',
       userEmail: userEmail || '',
       userPhone: userPhone || '',
@@ -1974,7 +1974,7 @@ app.post('/orders/cod', async (req, res) => {
       razorpayPaymentId: "session_cod_" + Date.now(),
       paymentMethod: 'COD',
       paymentStatus: 'Pending',
-      coinsEarned: Number(coinsEarned || 0),
+      coinsEarned: await computeCoinsEarnedForOrder(totalPrice, grandTotal, coinsEarned || req.body.coins),
       userName: userName || '',
       userEmail: userEmail || '',
       userPhone: userPhone || '',
@@ -2352,4 +2352,32 @@ app.get('/api/payment/razorpay-success', (req, res) => {
   return res.send(html);
 });
 
-// GET /api/payment/razorpay-cancel
+// GET /api/payment/razorpay-cancel
+
+async function computeCoinsEarnedForOrder(totalPrice, grandTotal, coinsEarnedReq) {
+  let coins = Number(coinsEarnedReq || 0);
+  if (coins > 0) return coins;
+
+  try {
+    const feesConfig = await mongoose.connection.db.collection('feesconfigs').findOne({ key: 'global' });
+    if (feesConfig && feesConfig.isCoinsActive !== false) {
+      const subTotal = Number(totalPrice || grandTotal || 0);
+      const cMin = Number(feesConfig.coinMinOrderAmount ?? 200);
+      const cBase = Number(feesConfig.coinBaseAmount ?? 10);
+      const cStep = Number(feesConfig.coinStepAmount ?? 100);
+      const cStepVal = Number(feesConfig.coinStepValue ?? 5);
+      const cMax = Number(feesConfig.coinMaxLimit ?? 100);
+      const cMaxOrder = Number(feesConfig.coinMaxThreshold ?? 1000);
+
+      if (subTotal >= cMaxOrder) {
+        coins = cMax;
+      } else if (subTotal >= cMin) {
+        coins = cBase + Math.floor((subTotal - cMin) / cStep) * cStepVal;
+        coins = Math.min(coins, cMax);
+      }
+    }
+  } catch (err) {
+    console.warn('[ComputeCoins] Fallback computation error:', err.message);
+  }
+  return coins;
+}
