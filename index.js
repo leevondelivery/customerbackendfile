@@ -7,6 +7,8 @@ const checkIsUserBlocked = (user) => {
     String(user.is_blocked).toLowerCase() === 'true' ||
     user.blocked === true ||
     String(user.blocked).toLowerCase() === 'true' ||
+    user.blickstatus === false ||
+    String(user.blickstatus).toLowerCase() === 'false' ||
     String(user.status || '').toLowerCase() === 'blocked' ||
     String(user.status || '').toLowerCase() === 'inactive' ||
     user.isActive === false ||
@@ -389,6 +391,15 @@ app.post('/login', async (req, res) => {
     if (dbPassword !== reqPassword) {
       console.warn(`[Login Failed] Incorrect password for user "${loginInput}". Saved: "${dbPassword}", Received: "${reqPassword}"`);
       return res.status(400).json({ success: false, message: "Incorrect password. Please try again." });
+    }
+
+    if (checkIsUserBlocked(user)) {
+      console.warn(`[Login Blocked] User "${loginInput}" is blocked by admin.`);
+      return res.status(403).json({
+        success: false,
+        isBlocked: true,
+        message: "Your account has been blocked by admin. Please contact support."
+      });
     }
 
     console.log(`[Login Success] User "${loginInput}" logged in successfully!`);
@@ -967,6 +978,14 @@ app.get('/user/:userid', async (req, res) => {
     const user = await User.findById(userid).lean();
     if (!user) {
       return res.status(404).json({ success: false, message: "User not found" });
+    }
+    if (checkIsUserBlocked(user)) {
+      console.warn(`[User Profile Blocked] User "${userid}" is blocked by admin.`);
+      return res.status(403).json({
+        success: false,
+        isBlocked: true,
+        message: "Your account has been blocked by admin. Please contact support."
+      });
     }
     // Exclude password
     const { password: _, ...userData } = user;
