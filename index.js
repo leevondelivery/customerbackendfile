@@ -1041,7 +1041,7 @@ app.get('/orderstatus/user/:userid', async (req, res) => {
       .limit(1)
       .next();
 
-    // Query rejectedorders collection if no active order found
+    // 4. Query rejectedorders collection
     let latestRejectedDoc = null;
     try {
       latestRejectedDoc = await db.collection('rejectedorders')
@@ -1053,8 +1053,53 @@ app.get('/orderstatus/user/:userid', async (req, res) => {
       console.warn('[OrderStatus] Rejected query error:', rejErr.message);
     }
 
-    let finalStatusDoc = latestStatusDoc || latestAcceptedDoc || latestOrderDoc;
+    // 5. Query finalcompletedorders collection
+    let latestCompletedDoc = null;
+    try {
+      latestCompletedDoc = await db.collection('finalcompletedorders')
+        .find(query)
+        .sort({ orderDate: -1, createdAt: -1, completedAt: -1, _id: -1 })
+        .limit(1)
+        .next();
+    } catch (compErr) {
+      console.warn('[OrderStatus] Completed query error:', compErr.message);
+    }
 
+    // Resolve which document is truly active / current
+    let finalStatusDoc = null;
+
+    // A. Check if latestStatusDoc or latestAcceptedDoc is active
+    if (latestStatusDoc || latestAcceptedDoc) {
+      const activeDoc = latestStatusDoc || latestAcceptedDoc;
+      const activeId = String(activeDoc.orderId || activeDoc.orderID || activeDoc.order_id || activeDoc._id || '');
+
+      const isCompleted = latestCompletedDoc && String(latestCompletedDoc.orderId || latestCompletedDoc._id || '') === activeId;
+      const isRejected = latestRejectedDoc && String(latestRejectedDoc.orderId || latestRejectedDoc._id || '') === activeId;
+
+      if (!isCompleted && !isRejected) {
+        finalStatusDoc = activeDoc;
+        if (latestAcceptedDoc && latestAcceptedDoc.status && !String(latestAcceptedDoc.status).toLowerCase().includes('waiting for the restaurent')) {
+          finalStatusDoc = { ...latestStatusDoc, ...latestAcceptedDoc };
+        }
+      }
+    }
+
+    // B. If no active statusDoc/acceptedDoc, check latestOrderDoc vs completed / rejected
+    if (!finalStatusDoc && latestOrderDoc) {
+      const orderId = String(latestOrderDoc.orderId || latestOrderDoc.orderID || latestOrderDoc.order_id || latestOrderDoc._id || '');
+
+      const isCompleted = latestCompletedDoc && String(latestCompletedDoc.orderId || latestCompletedDoc._id || '') === orderId;
+      const isRejected = latestRejectedDoc && String(latestRejectedDoc.orderId || latestRejectedDoc._id || '') === orderId;
+
+      if (!isCompleted && !isRejected) {
+        const oStatus = String(latestOrderDoc.status || '').toLowerCase().trim();
+        if (!oStatus.includes('reject') && !oStatus.includes('cancel') && !oStatus.includes('declin') && !oStatus.includes('failed')) {
+          finalStatusDoc = latestOrderDoc;
+        }
+      }
+    }
+
+    // C. If still no active doc, check if there is a recent rejected order
     if (!finalStatusDoc && latestRejectedDoc) {
       const rejTime = new Date(latestRejectedDoc.rejectedAt || latestRejectedDoc.orderDate || latestRejectedDoc.createdAt || Date.now()).getTime();
       if (Date.now() - rejTime < 24 * 60 * 60 * 1000) {
@@ -1064,12 +1109,6 @@ app.get('/orderstatus/user/:userid', async (req, res) => {
           orderStatus: 'rejected'
         };
       }
-    }
-
-    if (latestAcceptedDoc && latestAcceptedDoc.status && !String(latestAcceptedDoc.status).toLowerCase().includes('waiting for the restaurent')) {
-      finalStatusDoc = { ...latestStatusDoc, ...latestAcceptedDoc };
-    } else if (latestOrderDoc && latestOrderDoc.status && !String(latestOrderDoc.status).toLowerCase().includes('waiting for the restaurent')) {
-      finalStatusDoc = { ...latestStatusDoc, ...latestOrderDoc };
     }
 
     return res.status(200).json({ success: true, orderStatus: finalStatusDoc || null });
