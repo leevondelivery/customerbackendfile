@@ -1041,7 +1041,30 @@ app.get('/orderstatus/user/:userid', async (req, res) => {
       .limit(1)
       .next();
 
+    // Query rejectedorders collection if no active order found
+    let latestRejectedDoc = null;
+    try {
+      latestRejectedDoc = await db.collection('rejectedorders')
+        .find(query)
+        .sort({ orderDate: -1, createdAt: -1, rejectedAt: -1, _id: -1 })
+        .limit(1)
+        .next();
+    } catch (rejErr) {
+      console.warn('[OrderStatus] Rejected query error:', rejErr.message);
+    }
+
     let finalStatusDoc = latestStatusDoc || latestAcceptedDoc || latestOrderDoc;
+
+    if (!finalStatusDoc && latestRejectedDoc) {
+      const rejTime = new Date(latestRejectedDoc.rejectedAt || latestRejectedDoc.orderDate || latestRejectedDoc.createdAt || Date.now()).getTime();
+      if (Date.now() - rejTime < 24 * 60 * 60 * 1000) {
+        finalStatusDoc = {
+          ...latestRejectedDoc,
+          status: 'rejected',
+          orderStatus: 'rejected'
+        };
+      }
+    }
 
     if (latestAcceptedDoc && latestAcceptedDoc.status && !String(latestAcceptedDoc.status).toLowerCase().includes('waiting for the restaurent')) {
       finalStatusDoc = { ...latestStatusDoc, ...latestAcceptedDoc };
