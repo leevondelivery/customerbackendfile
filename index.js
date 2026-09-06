@@ -1328,6 +1328,14 @@ app.post('/api/coupon/validate', async (req, res) => {
       }
     }
 
+    const minOrderAmount = parseFloat(coupon.minOrderAmount) || 0;
+    if (minOrderAmount > 0 && subTotal < minOrderAmount) {
+      return res.status(400).json({
+        success: false,
+        message: `Minimum order amount of ₹${minOrderAmount} is required to apply this coupon code.`
+      });
+    }
+
     const discountType = coupon.discountType || 'flat';
     const discountValue = parseFloat(coupon.discountValue) || 0;
     let discountAmount = 0;
@@ -1346,7 +1354,8 @@ app.post('/api/coupon/validate', async (req, res) => {
       influencerName: coupon.influencerName,
       discountType,
       discountValue,
-      discountAmount
+      discountAmount,
+      minOrderAmount
     });
   } catch (err) {
     console.error("Coupon validation error:", err);
