@@ -122,7 +122,7 @@ const userSchema = new mongoose.Schema({
   securityAnswer: { type: String },
   savedAddresses: { type: Array, default: [] },
     termsAccepted: { type: Boolean, default: false },
-    termsAcceptedAt: { type: Date }
+    termsAcceptedAt: { type: String }
 }, { strict: false });
 
 const User = mongoose.model('User', userSchema, 'users');
@@ -447,7 +447,7 @@ app.post('/signup', async (req, res) => {
       securityAnswer: securityAnswer ? securityAnswer.trim().toLowerCase() : 'n/a',
       savedAddresses: [],
         termsAccepted: true,
-        termsAcceptedAt: termsAcceptedAt ? new Date(termsAcceptedAt) : new Date()
+        termsAcceptedAt: termsAcceptedAt ? termsAcceptedAt : (new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) + ' IST')
       });
 
     const savedUser = await newUser.save();
@@ -957,7 +957,7 @@ app.put('/user/update', async (req, res) => {
       updateFields.termsAccepted = termsAccepted === true || termsAccepted === 'true';
     }
     if (termsAcceptedAt !== undefined) {
-      updateFields.termsAcceptedAt = termsAcceptedAt ? new Date(termsAcceptedAt) : new Date();
+      updateFields.termsAcceptedAt = termsAcceptedAt ? termsAcceptedAt : (new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) + ' IST');
     }
 
     const updatedUser = await User.findByIdAndUpdate(
