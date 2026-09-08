@@ -120,7 +120,9 @@ const userSchema = new mongoose.Schema({
   name: { type: String },
   email: { type: String },
   securityAnswer: { type: String },
-  savedAddresses: { type: Array, default: [] }
+  savedAddresses: { type: Array, default: [] },
+    termsAccepted: { type: Boolean, default: false },
+    termsAcceptedAt: { type: Date }
 }, { strict: false });
 
 const User = mongoose.model('User', userSchema, 'users');
@@ -419,10 +421,14 @@ app.post('/login', async (req, res) => {
 });
 
 app.post('/signup', async (req, res) => {
-  const { phone, password, name, email, securityAnswer } = req.body;
+  const { phone, password, name, email, securityAnswer, termsAccepted, termsAcceptedAt } = req.body;
 
   if (!phone || !password || !name) {
     return res.status(400).json({ success: false, message: "Phone, password, and name are required" });
+  }
+
+  if (termsAccepted !== true && termsAccepted !== 'true' && termsAccepted !== 1) {
+    return res.status(400).json({ success: false, message: "You must accept the Privacy Policy and Terms & Conditions to create an account." });
   }
 
   try {
@@ -439,8 +445,10 @@ app.post('/signup', async (req, res) => {
       email: email && email.trim() ? email.trim() : 'N/A',
       isPhoneVerified: req.body.isPhoneVerified === true || req.body.isPhoneVerified === 'true' || req.body.isPhoneVerified === 1,
       securityAnswer: securityAnswer ? securityAnswer.trim().toLowerCase() : 'n/a',
-      savedAddresses: []
-    });
+      savedAddresses: [],
+        termsAccepted: true,
+        termsAcceptedAt: termsAcceptedAt ? new Date(termsAcceptedAt) : new Date()
+      });
 
     const savedUser = await newUser.save();
 
