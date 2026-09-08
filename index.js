@@ -655,7 +655,9 @@ app.post('/login/google', async (req, res) => {
       });
     }
 
+    let isNewUser = false;
     if (!user) {
+      isNewUser = true;
       // Register user in MongoDB (with unique temporary phone value to avoid unique index duplicate error)
       const tempPhone = `google_temp_${uid}`;
       const newUser = new User({
@@ -664,9 +666,11 @@ app.post('/login/google', async (req, res) => {
         phone: tempPhone,
         isPhoneVerified: false,
         firebaseUid: uid,
-        savedAddresses: []
+        savedAddresses: [],
+        termsAccepted: false
       });
-      user = await newUser.save();
+      const savedDoc = await newUser.save();
+      user = savedDoc.toObject ? savedDoc.toObject() : savedDoc;
       console.log(`[Google Signup] Registered new MongoDB user: ${email} with temp phone ${tempPhone}`);
     } else {
       if (!user.firebaseUid) {
@@ -681,7 +685,8 @@ app.post('/login/google', async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "Google login successful",
-      user: userData
+      user: userData,
+      isNewUser
     });
 
   } catch (err) {
@@ -930,7 +935,7 @@ app.post('/user/verify-phone', async (req, res) => {
 });
 
 app.put('/user/update', async (req, res) => {
-  const { userid, email, dateOfBirth, phone, isPhoneVerified } = req.body;
+  const { userid, email, dateOfBirth, phone, isPhoneVerified, termsAccepted, termsAcceptedAt } = req.body;
 
   if (!userid) {
     return res.status(400).json({ success: false, message: "User ID is required" });
@@ -947,6 +952,12 @@ app.put('/user/update', async (req, res) => {
     }
     if (isPhoneVerified !== undefined) {
       updateFields.isPhoneVerified = isPhoneVerified;
+    }
+    if (termsAccepted !== undefined) {
+      updateFields.termsAccepted = termsAccepted === true || termsAccepted === 'true';
+    }
+    if (termsAcceptedAt !== undefined) {
+      updateFields.termsAcceptedAt = termsAcceptedAt ? new Date(termsAcceptedAt) : new Date();
     }
 
     const updatedUser = await User.findByIdAndUpdate(
