@@ -1813,10 +1813,78 @@ const fetchRoutesDistance = (originLat, originLng, destLat, destLng, apiKey) => 
 };
 
 app.get('/distance', async (req, res) => {
-  const { originLat, originLng, restaurantId } = req.query;
+  const { originLat, originLng, restaurantId, destLat, destLng } = req.query;
 
-  if (!originLat || !originLng || !restaurantId) {
-    return res.status(400).json({ success: false, message: "Missing origin coordinates or restaurantId" });
+  if (!originLat || !originLng) {
+    return res.status(400).json({ success: false, message: "Missing origin coordinates" });
+  }
+
+  try {
+    let destLatNum = destLat !== undefined ? Number(destLat) : null;
+    let destLngNum = destLng !== undefined ? Number(destLng) : null;
+
+    if (isNaN(destLatNum) || isNaN(destLngNum) || destLatNum === null || destLngNum === null) {
+      if (!restaurantId) {
+        return res.status(400).json({ success: false, message: "Missing restaurantId or destination coordinates" });
+      }
+
+      const queryOr = [
+        { restId: restaurantId },
+        { restId: String(restaurantId) },
+        { restId: !isNaN(Number(restaurantId)) ? Number(restaurantId) : restaurantId },
+      ];
+
+      if (mongoose.Types.ObjectId.isValid(restaurantId)) {
+        queryOr.push({ _id: new mongoose.Types.ObjectId(restaurantId) });
+      } else {
+        queryOr.push({ _id: restaurantId });
+      }
+
+      const restaurant = await Restaurant.findOne({ $or: queryOr }).lean();
+
+      if (!restaurant) {
+        return res.status(404).json({ success: false, message: "Restaurant not found" });
+      }
+
+      const loc = restaurant.restaurantLocation || restaurant.location || restaurant.coords;
+      if (!loc) {
+        return res.status(400).json({ success: false, message: "Restaurant location coordinates not set in DB" });
+      }
+
+      const rawLat = loc.lat ?? loc.latitude;
+      const rawLng = loc.lng ?? loc.longitude;
+      if (rawLat === undefined || rawLng === undefined || rawLat === null || rawLng === null) {
+        return res.status(400).json({ success: false, message: "Restaurant location coordinates invalid in DB" });
+      }
+
+      destLatNum = Number(rawLat);
+      destLngNum = Number(rawLng);
+    }
+
+    if (isNaN(destLatNum) || isNaN(destLngNum)) {
+      return res.status(400).json({ success: false, message: "Invalid destination coordinates" });
+    }
+
+    const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ success: false, message: "Google Maps API Key is not configured on backend" });
+    }
+
+    const result = await fetchRoutesDistance(originLat, originLng, destLatNum, destLngNum, apiKey);
+
+    if (result && result.routes && result.routes[0]) {
+      const distanceMeters = result.routes[0].distanceMeters;
+      const distanceValKm = (distanceMeters / 1000).toFixed(1);
+      return res.status(200).json({ success: true, distance: `${distanceValKm} km`, km: distanceValKm });
+    } else {
+      console.warn("Routes API returned empty or error response:", result);
+      return res.status(400).json({ success: false, message: "Could not calculate road distance" });
+    }
+  } catch (err) {
+    console.error("Distance calculation error:", err);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
   }
 
   try {
