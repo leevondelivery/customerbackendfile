@@ -1885,45 +1885,6 @@ app.get('/distance', async (req, res) => {
     return res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
-  }
-
-  try {
-    const restaurant = await Restaurant.findOne({
-      $or: [
-        { restId: restaurantId },
-        { _id: mongoose.Types.ObjectId.isValid(restaurantId) ? new mongoose.Types.ObjectId(restaurantId) : restaurantId }
-      ]
-    }).lean();
-
-    if (!restaurant) {
-      return res.status(404).json({ success: false, message: "Restaurant not found" });
-    }
-
-    const restLocation = restaurant.restaurantLocation;
-    if (!restLocation || restLocation.lat === undefined || restLocation.lng === undefined) {
-      return res.status(400).json({ success: false, message: "Restaurant location coordinates not set in DB" });
-    }
-
-    const apiKey = process.env.GOOGLE_MAPS_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ success: false, message: "Google Maps API Key is not configured on backend" });
-    }
-
-    const result = await fetchRoutesDistance(originLat, originLng, restLocation.lat, restLocation.lng, apiKey);
-
-    if (result && result.routes && result.routes[0]) {
-      const distanceMeters = result.routes[0].distanceMeters;
-      const distanceValKm = (distanceMeters / 1000).toFixed(1);
-      return res.status(200).json({ success: true, distance: `${distanceValKm} km`, km: distanceValKm });
-    } else {
-      console.warn("Routes API returned empty or error response:", result);
-      return res.status(400).json({ success: false, message: "Could not calculate road distance" });
-    }
-  } catch (err) {
-    console.error("Distance calculation error:", err);
-    return res.status(500).json({ success: false, message: "Internal server error" });
-  }
-});
 
 // GET /fees-config endpoint
 app.get('/fees-config', async (req, res) => {
