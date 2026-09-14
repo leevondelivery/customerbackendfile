@@ -1844,6 +1844,7 @@ const fetchOsmDistance = (originLat, originLng, destLat, destLng) => {
             const kmVal = (d.routes[0].distance / 1000).toFixed(1);
             resolve(kmVal);
           } else {
+            console.warn('[Google Distance Matrix Error]:', data.error_message || data.status);
             resolve(null);
           }
         } catch(e) { resolve(null); }
@@ -1880,6 +1881,88 @@ const fetchDistanceMatrixGoogle = (originLat, originLng, destLat, destLng, apiKe
   });
 };
 
+
+
+
+// POST /distance/batch - Batch Google Distance Matrix API for all restaurants in 1 single Google API call
+app.post('/distance/batch', async (req, res) => {
+  try {
+    const { originLat, originLng, destinations } = req.body;
+    if (!originLat || !originLng || !Array.isArray(destinations) || destinations.length === 0) {
+      return res.status(400).json({ success: false, message: "Missing originLat, originLng or destinations array" });
+    }
+
+    const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+    const results = {};
+
+    const validItems = destinations.filter(item => {
+      const lat = Number(item.lat ?? item.latitude);
+      const lng = Number(item.lng ?? item.longitude);
+      return !isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0;
+    });
+
+    if (validItems.length === 0) {
+      return res.status(200).json({ success: true, distances: {} });
+    }
+
+    const chunkSize = 25;
+    for (let i = 0; i < validItems.length; i += chunkSize) {
+      const chunk = validItems.slice(i, i + chunkSize);
+      const destString = chunk.map(item => `${item.lat ?? item.latitude},${item.lng ?? item.longitude}`).join('|');
+
+      if (apiKey && apiKey.startsWith('AIza')) {
+        try {
+          const https = require('https');
+          const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${originLat},${originLng}&destinations=${encodeURIComponent(destString)}&mode=driving&key=${apiKey}`;
+          
+          const googleRes = await new Promise((resolve) => {
+            https.get(url, { timeout: 7000 }, (resStream) => {
+              let body = '';
+              resStream.on('data', c => body += c);
+              resStream.on('end', () => {
+                try { resolve(JSON.parse(body)); } catch(e) { resolve(null); }
+              });
+            }).on('error', () => resolve(null));
+          });
+
+          if (googleRes && googleRes.status === 'OK' && googleRes.rows && googleRes.rows[0] && googleRes.rows[0].elements) {
+            const elements = googleRes.rows[0].elements;
+            chunk.forEach((item, index) => {
+              const elem = elements[index];
+              let distText = null;
+              if (elem && elem.status === 'OK' && elem.distance && elem.distance.value !== undefined) {
+                distText = `${(elem.distance.value / 1000).toFixed(1)} km`;
+              }
+              const restId = item.id || item.restId || item._id;
+              if (restId) {
+                results[String(restId)] = distText;
+              }
+            });
+          }
+        } catch (gErr) {
+          console.warn('[Batch Distance Google Error]:', gErr.message);
+        }
+      }
+
+      chunk.forEach(item => {
+        const restId = item.id || item.restId || item._id;
+        if (restId && !results[String(restId)]) {
+          const lat = Number(item.lat ?? item.latitude);
+          const lng = Number(item.lng ?? item.longitude);
+          const airDist = getHaversineDistanceBackend(originLat, originLng, lat, lng);
+          results[String(restId)] = `${(airDist * 1.35).toFixed(1)} km`;
+        }
+      });
+    }
+
+    console.log(`[Batch Distance Endpoint] Successfully computed Google Maps distances for ${Object.keys(results).length} restaurants.`);
+    return res.status(200).json({ success: true, distances: results });
+
+  } catch (err) {
+    console.error("Batch distance error:", err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
 
 app.get('/distance', async (req, res) => {
   const { originLat, originLng, restaurantId, destLat, destLng } = req.query;
@@ -1934,7 +2017,7 @@ app.get('/distance', async (req, res) => {
       try {
         const dmKm = await fetchDistanceMatrixGoogle(originLat, originLng, destLatNum, destLngNum, apiKey);
         if (dmKm) {
-          console.log("[Google Distance Matrix API] Distance: " + dmKm + " km");
+          console.log("[Google Distance Matrix API] Origin (" + originLat + ", " + originLng + ") -> Dest (" + destLatNum + ", " + destLngNum + ") = " + dmKm + " km");
           return res.status(200).json({ success: true, distance: dmKm + " km", km: dmKm, provider: "google_matrix" });
         }
       } catch(dmErr) {
