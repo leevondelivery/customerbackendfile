@@ -1889,7 +1889,7 @@ app.post('/distance/batch', async (req, res) => {
   try {
     const { originLat, originLng, destinations } = req.body;
     if (!originLat || !originLng || !Array.isArray(destinations) || destinations.length === 0) {
-      return res.status(400).json({ success: false, message: "Missing originLat, originLng or destinations array" });
+      return res.status(400).json({ success: false, message: 'Missing originLat, originLng or destinations array' });
     }
 
     const apiKey = process.env.GOOGLE_MAPS_API_KEY;
@@ -1908,58 +1908,125 @@ app.post('/distance/batch', async (req, res) => {
     const chunkSize = 25;
     for (let i = 0; i < validItems.length; i += chunkSize) {
       const chunk = validItems.slice(i, i + chunkSize);
-      const destString = chunk.map(item => `${item.lat ?? item.latitude},${item.lng ?? item.longitude}`).join('|');
 
       if (apiKey && apiKey.startsWith('AIza')) {
+        // 1. Primary: Google Routes Matrix API (TWO_WHEELER mode for realistic bike navigation)
         try {
           const https = require('https');
-          const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${originLat},${originLng}&destinations=${encodeURIComponent(destString)}&mode=driving&key=${apiKey}`;
-          
-          const googleRes = await new Promise((resolve) => {
-            https.get(url, { timeout: 7000 }, (resStream) => {
+          const postData = JSON.stringify({
+            origins: [{
+              waypoint: {
+                location: {
+                  latLng: {
+                    latitude: parseFloat(originLat),
+                    longitude: parseFloat(originLng)
+                  }
+                }
+              }
+            }],
+            destinations: chunk.map(item => ({
+              waypoint: {
+                location: {
+                  latLng: {
+                    latitude: parseFloat(item.lat ?? item.latitude),
+                    longitude: parseFloat(item.lng ?? item.longitude)
+                  }
+                }
+              }
+            })),
+            travelMode: 'TWO_WHEELER',
+            routingPreference: 'TRAFFIC_UNAWARE'
+          });
+
+          const routeMatrixRes = await new Promise((resolve) => {
+            const reqStream = https.request({
+              hostname: 'routes.googleapis.com',
+              port: 443,
+              path: '/distanceMatrix/v2:computeRouteMatrix',
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Goog-Api-Key': apiKey,
+                'X-Goog-FieldMask': 'originIndex,destinationIndex,status,distanceMeters,duration',
+                'Content-Length': Buffer.byteLength(postData)
+              },
+              timeout: 7000
+            }, (resStream) => {
               let body = '';
               resStream.on('data', c => body += c);
               resStream.on('end', () => {
                 try { resolve(JSON.parse(body)); } catch(e) { resolve(null); }
               });
-            }).on('error', () => resolve(null));
+            });
+            reqStream.on('error', () => resolve(null));
+            reqStream.write(postData);
+            reqStream.end();
           });
 
-          if (googleRes && googleRes.status === 'OK' && googleRes.rows && googleRes.rows[0] && googleRes.rows[0].elements) {
-            const elements = googleRes.rows[0].elements;
-            chunk.forEach((item, index) => {
-              const elem = elements[index];
-              let distText = null;
-              if (elem && elem.status === 'OK' && elem.distance && elem.distance.value !== undefined) {
-                distText = `${(elem.distance.value / 1000).toFixed(1)} km`;
-              }
-              const restId = item.id || item.restId || item._id;
-              if (restId) {
-                results[String(restId)] = distText;
+          if (Array.isArray(routeMatrixRes)) {
+            routeMatrixRes.forEach((elem) => {
+              const destIndex = elem.destinationIndex ?? 0;
+              const item = chunk[destIndex];
+              if (item && elem.distanceMeters !== undefined) {
+                const distKm = (elem.distanceMeters / 1000).toFixed(1);
+                const restId = item.id || item.restId || item._id;
+                if (restId) {
+                  results[String(restId)] = distKm + ' km';
+                }
               }
             });
           }
-        } catch (gErr) {
-          console.warn('[Batch Distance Google Error]:', gErr.message);
+        } catch (rErr) {
+          console.warn('[Batch Routes Matrix Error]:', rErr.message);
+        }
+
+        // 2. Secondary fallback for any missing item: Google Distance Matrix API
+        const missingChunk = chunk.filter(item => {
+          const restId = item.id || item.restId || item._id;
+          return restId && !results[String(restId)];
+        });
+
+        if (missingChunk.length > 0) {
+          try {
+            const https = require('https');
+            const destString = missingChunk.map(item => (item.lat ?? item.latitude) + ',' + (item.lng ?? item.longitude)).join('|');
+            const url = 'https://maps.googleapis.com/maps/api/distancematrix/json?origins=' + originLat + ',' + originLng + '&destinations=' + encodeURIComponent(destString) + '&mode=driving&key=' + apiKey;
+            
+            const googleRes = await new Promise((resolve) => {
+              https.get(url, { timeout: 6000 }, (resStream) => {
+                let body = '';
+                resStream.on('data', c => body += c);
+                resStream.on('end', () => {
+                  try { resolve(JSON.parse(body)); } catch(e) { resolve(null); }
+                });
+              }).on('error', () => resolve(null));
+            });
+
+            if (googleRes && googleRes.status === 'OK' && googleRes.rows && googleRes.rows[0] && googleRes.rows[0].elements) {
+              const elements = googleRes.rows[0].elements;
+              missingChunk.forEach((item, index) => {
+                const elem = elements[index];
+                if (elem && elem.status === 'OK' && elem.distance && elem.distance.value !== undefined) {
+                  const distText = (elem.distance.value / 1000).toFixed(1) + ' km';
+                  const restId = item.id || item.restId || item._id;
+                  if (restId && !results[String(restId)]) {
+                    results[String(restId)] = distText;
+                  }
+                }
+              });
+            }
+          } catch (gErr) {
+            console.warn('[Batch Distance Google Fallback Error]:', gErr.message);
+          }
         }
       }
-
-      chunk.forEach(item => {
-        const restId = item.id || item.restId || item._id;
-        if (restId && !results[String(restId)]) {
-          const lat = Number(item.lat ?? item.latitude);
-          const lng = Number(item.lng ?? item.longitude);
-          const airDist = getHaversineDistanceBackend(originLat, originLng, lat, lng);
-          results[String(restId)] = `${(airDist * 1.35).toFixed(1)} km`;
-        }
-      });
     }
 
-    console.log(`[Batch Distance Endpoint] Successfully computed Google Maps distances for ${Object.keys(results).length} restaurants.`);
+    console.log('[Batch Distance Endpoint] Successfully computed Google Maps TWO_WHEELER distances for ' + Object.keys(results).length + ' restaurants.');
     return res.status(200).json({ success: true, distances: results });
 
   } catch (err) {
-    console.error("Batch distance error:", err);
+    console.error('Batch distance error:', err);
     return res.status(500).json({ success: false, message: err.message });
   }
 });
