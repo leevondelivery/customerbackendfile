@@ -2019,7 +2019,21 @@ app.post('/distance/batch', async (req, res) => {
             console.warn('[Batch Distance Google Fallback Error]:', gErr.message);
           }
         }
-      }
+      
+
+      // Secondary fallback if Google Maps API key is missing on Railway or item failed
+      chunk.forEach(item => {
+        const restId = item.id || item.restId || item._id;
+        if (restId && !results[String(restId)]) {
+          const itemLat = Number(item.lat ?? item.latitude);
+          const itemLng = Number(item.lng ?? item.longitude);
+          if (!isNaN(itemLat) && !isNaN(itemLng) && itemLat !== 0 && itemLng !== 0) {
+            const fallbackKm = getHaversineDistanceBackend(originLat, originLng, itemLat, itemLng);
+            const estimatedKm = (fallbackKm * 1.25).toFixed(1);
+            results[String(restId)] = estimatedKm + ' km';
+          }
+        }
+      });}
     }
 
     console.log('[Batch Distance Endpoint] Successfully computed Google Maps TWO_WHEELER distances for ' + Object.keys(results).length + ' restaurants.');
