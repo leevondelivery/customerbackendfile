@@ -208,27 +208,80 @@ const Review = mongoose.model('Review', reviewSchema, 'reviews');
 // Review Endpoints
 const handleGetUserReviews = async (req, res) => {
   try {
-    const userId = req.params.userId || req.params.userid;
-    if (!userId) {
+    const rawId = req.params.userId || req.params.userid;
+    if (!rawId) {
       return res.status(400).json({ success: false, message: 'User ID is required' });
     }
 
-    const reviewsCollection = mongoose.connection.db.collection('reviews');
+    const userIdStr = String(rawId).trim();
+    const cleanDigits = userIdStr.replace(/\D/g, '').slice(-10);
 
     const orConditions = [
-      { userId: String(userId) },
-      { user_id: String(userId) },
-      { userid: String(userId) },
-      { customerId: String(userId) },
-      { customer_id: String(userId) }
+      { userId: userIdStr },
+      { user_id: userIdStr },
+      { userid: userIdStr },
+      { customerId: userIdStr },
+      { customer_id: userIdStr }
     ];
 
-    if (mongoose.Types.ObjectId.isValid(userId)) {
-      const objId = new mongoose.Types.ObjectId(userId);
+    if (cleanDigits) {
+      orConditions.push(
+        { userId: cleanDigits },
+        { user_id: cleanDigits },
+        { userid: cleanDigits },
+        { customerId: cleanDigits },
+        { userId: `+91${cleanDigits}` },
+        { user_id: `+91${cleanDigits}` }
+      );
+    }
+
+    if (mongoose.Types.ObjectId.isValid(userIdStr)) {
+      const objId = new mongoose.Types.ObjectId(userIdStr);
       orConditions.push({ userId: objId }, { user_id: objId }, { userid: objId }, { customerId: objId });
     }
 
-    // Fetch all reviews directly from 'reviews' collection
+    // Lookup user in users collection to expand aliases (_id and phone)
+    const db = mongoose.connection.db;
+    try {
+      let userDoc = null;
+      if (mongoose.Types.ObjectId.isValid(userIdStr)) {
+        userDoc = await db.collection('users').findOne({ _id: new mongoose.Types.ObjectId(userIdStr) });
+      }
+      if (!userDoc && cleanDigits) {
+        userDoc = await db.collection('users').findOne({
+          $or: [
+            { phone: cleanDigits },
+            { phone: `+91${cleanDigits}` },
+            { phone: userIdStr }
+          ]
+        });
+      }
+
+      if (userDoc) {
+        const uId = String(userDoc._id);
+        const uPhone = String(userDoc.phone || '').replace(/\D/g, '').slice(-10);
+        if (uId) {
+          orConditions.push({ userId: uId }, { user_id: uId }, { userid: uId }, { customerId: uId });
+          if (mongoose.Types.ObjectId.isValid(uId)) {
+            const uObj = new mongoose.Types.ObjectId(uId);
+            orConditions.push({ userId: uObj }, { user_id: uObj }, { userid: uObj });
+          }
+        }
+        if (uPhone) {
+          orConditions.push(
+            { userId: uPhone },
+            { user_id: uPhone },
+            { userid: uPhone },
+            { customerId: uPhone },
+            { userId: `+91${uPhone}` },
+            { user_id: `+91${uPhone}` }
+          );
+        }
+      }
+    } catch (_uErr) {}
+
+    const reviewsCollection = db.collection('reviews');
+
     const userReviews = await reviewsCollection
       .find({ $or: orConditions })
       .sort({ createdAt: -1, _id: -1 })
