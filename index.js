@@ -208,92 +208,43 @@ const Review = mongoose.model('Review', reviewSchema, 'reviews');
 // Review Endpoints
 const handleGetUserReviews = async (req, res) => {
   try {
-    const rawId = req.params.userId || req.params.userid;
-    if (!rawId) {
+    const userId = req.params.userId || req.params.userid;
+
+    if (!userId) {
       return res.status(400).json({ success: false, message: 'User ID is required' });
     }
 
-    const userIdStr = String(rawId).trim();
-    const cleanDigits = userIdStr.replace(/\D/g, '').slice(-10);
+    const reviewsCollection = mongoose.connection.db.collection('reviews');
+    console.log(`[GET /reviews/user/${userId}] Request received.`);
 
-    const orConditions = [
-      { userId: userIdStr },
-      { user_id: userIdStr },
-      { userid: userIdStr },
-      { customerId: userIdStr },
-      { customer_id: userIdStr }
-    ];
+    const query = {
+      $or: [
+        { userId: String(userId) },
+        { user_id: String(userId) },
+        { customerId: String(userId) },
+        { userid: String(userId) }
+      ]
+    };
 
-    if (cleanDigits) {
-      orConditions.push(
-        { userId: cleanDigits },
-        { user_id: cleanDigits },
-        { userid: cleanDigits },
-        { customerId: cleanDigits },
-        { userId: `+91${cleanDigits}` },
-        { user_id: `+91${cleanDigits}` }
-      );
+    if (mongoose.Types.ObjectId.isValid(userId)) {
+      const objId = new mongoose.Types.ObjectId(userId);
+      query.$or.push({ userId: objId }, { user_id: objId }, { customerId: objId }, { userid: objId });
     }
 
-    if (mongoose.Types.ObjectId.isValid(userIdStr)) {
-      const objId = new mongoose.Types.ObjectId(userIdStr);
-      orConditions.push({ userId: objId }, { user_id: objId }, { userid: objId }, { customerId: objId });
-    }
+    console.log(`[GET /reviews/user/${userId}] Querying database:`, JSON.stringify(query));
 
-    // Lookup user in users collection to expand aliases (_id and phone)
-    const db = mongoose.connection.db;
-    try {
-      let userDoc = null;
-      if (mongoose.Types.ObjectId.isValid(userIdStr)) {
-        userDoc = await db.collection('users').findOne({ _id: new mongoose.Types.ObjectId(userIdStr) });
-      }
-      if (!userDoc && cleanDigits) {
-        userDoc = await db.collection('users').findOne({
-          $or: [
-            { phone: cleanDigits },
-            { phone: `+91${cleanDigits}` },
-            { phone: userIdStr }
-          ]
-        });
-      }
+    const userReviews = await reviewsCollection.find(query).toArray();
 
-      if (userDoc) {
-        const uId = String(userDoc._id);
-        const uPhone = String(userDoc.phone || '').replace(/\D/g, '').slice(-10);
-        if (uId) {
-          orConditions.push({ userId: uId }, { user_id: uId }, { userid: uId }, { customerId: uId });
-          if (mongoose.Types.ObjectId.isValid(uId)) {
-            const uObj = new mongoose.Types.ObjectId(uId);
-            orConditions.push({ userId: uObj }, { user_id: uObj }, { userid: uObj });
-          }
-        }
-        if (uPhone) {
-          orConditions.push(
-            { userId: uPhone },
-            { user_id: uPhone },
-            { userid: uPhone },
-            { customerId: uPhone },
-            { userId: `+91${uPhone}` },
-            { user_id: `+91${uPhone}` }
-          );
-        }
-      }
-    } catch (_uErr) {}
-
-    const reviewsCollection = db.collection('reviews');
-
-    const userReviews = await reviewsCollection
-      .find({ $or: orConditions })
-      .sort({ createdAt: -1, _id: -1 })
-      .toArray();
-
-    return res.status(200).json({
-      success: true,
-      reviews: userReviews || []
+    userReviews.sort((a, b) => {
+      const dateA = new Date(a.createdAt || a.date || a.timestamp || 0);
+      const dateB = new Date(b.createdAt || b.date || b.timestamp || 0);
+      return dateB - dateA;
     });
+
+    return res.status(200).json({ success: true, reviews: userReviews || [] });
   } catch (error) {
-    console.error('Error fetching user reviews from MongoDB reviews collection:', error);
-    return res.status(500).json({ success: false, message: 'Failed to fetch reviews', error: error.message });
+    console.error('Error fetching user reviews:', error);
+    return res.status(500).json({ success: false, message: 'Failed to fetch user reviews', error: error.message });
   }
 };
 
