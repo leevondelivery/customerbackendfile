@@ -104,7 +104,12 @@ mongoose.connect(MONGODB_URI)
       await Promise.all([
         db.collection('orderstatuses').createIndex({ userId: 1, orderDate: -1, createdAt: -1 }),
         db.collection('orders').createIndex({ userId: 1 }),
-        db.collection('reviews').createIndex({ userId: 1 })
+        db.collection('reviews').createIndex({ userId: 1 }),
+        db.collection('reviews').createIndex({ user_id: 1 }),
+        db.collection('reviews').createIndex({ orderId: 1 }),
+        db.collection('finalcompletedorders').createIndex({ userId: 1 }),
+        db.collection('finalcompletedorders').createIndex({ user_id: 1 }),
+        db.collection('finalcompletedorders').createIndex({ customerId: 1 })
       ]);
       console.log("[MongoDB] Performance indexes ensured for orderstatuses, orders, reviews");
     } catch (e) {
@@ -2256,6 +2261,31 @@ app.post('/review', handleSaveReview);
 app.post('/orders/review', handleSaveReview);
 
 // Start Server
+
+// GET /api/offers/restaurant/:id - Fetch active restaurant offers (1+1, category % discounts, tiered bill discounts)
+app.get('/api/offers/restaurant/:id', async (req, res) => {
+  try {
+    const restId = String(req.params.id || '').trim();
+    console.log(`[GET /api/offers/restaurant/${restId}] Fetching active restaurant offers...`);
+    let offer = await mongoose.connection.db.collection('restaurantoffers').findOne({
+      $or: [{ restId: restId }, { restId: Number(restId) }]
+    });
+    if (!offer) {
+      offer = {
+        restId,
+        bogoOffers: [],
+        categoryDiscounts: [],
+        tieredDiscounts: []
+      };
+    }
+    console.log(`[GET /api/offers/restaurant/${restId}] Returning ${offer.tieredDiscounts?.length || 0} tiered discounts, ${offer.bogoOffers?.length || 0} BOGO offers`);
+    return res.status(200).json({ success: true, data: offer });
+  } catch (err) {
+    console.error('Error fetching restaurant offers:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Backend server running on port ${PORT}`);
 });
@@ -2738,3 +2768,19 @@ async function computeCoinsEarnedForOrder(totalPrice, grandTotal, coinsEarnedReq
   }
   return coins;
 }
+
+
+    if (!offer) {
+      offer = {
+        restId,
+        bogoOffers: [],
+        categoryDiscounts: [],
+        tieredDiscounts: []
+      };
+    }
+    return res.status(200).json({ success: true, data: offer });
+  } catch (err) {
+    console.error('Error fetching restaurant offers:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
