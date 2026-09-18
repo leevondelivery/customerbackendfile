@@ -2768,19 +2768,3 @@ async function computeCoinsEarnedForOrder(totalPrice, grandTotal, coinsEarnedReq
   }
   return coins;
 }
-
-
-    if (!offer) {
-      offer = {
-        restId,
-        bogoOffers: [],
-        categoryDiscounts: [],
-        tieredDiscounts: []
-      };
-    }
-    return res.status(200).json({ success: true, data: offer });
-  } catch (err) {
-    console.error('Error fetching restaurant offers:', err);
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
