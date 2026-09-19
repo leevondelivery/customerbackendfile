@@ -554,6 +554,10 @@ app.post('/forgot-password/reset-password', async (req, res) => {
     return res.status(400).json({ success: false, message: "Phone and new password are required" });
   }
 
+  if (typeof newPassword !== 'string' || newPassword.trim().length < 6) {
+    return res.status(400).json({ success: false, message: "Password must be at least 6 characters long" });
+  }
+
   try {
     const user = await User.findOne({ phone });
     if (!user) {
