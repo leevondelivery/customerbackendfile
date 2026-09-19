@@ -723,7 +723,8 @@ const restaurantSchema = new mongoose.Schema({
   openTime: { type: String },
   closeTime: { type: String },
   isActive: { type: Boolean, default: true },
-  isactive: { type: Boolean, default: true }
+  isactive: { type: Boolean, default: true },
+    rating: { type: Number, default: 4.2 }
 }, { strict: false });
 
 const Restaurant = mongoose.model('Restaurant', restaurantSchema, 'restuarentusers');
@@ -791,7 +792,7 @@ app.get('/restaurants', async (req, res) => {
       const restId = rest.restId;
       const categories = categoriesMap[restId] || [];
 
-      let updatedRest = { ...rest, categories };
+      let updatedRest = { ...rest, categories, rating: (rest.rating !== undefined && rest.rating !== null) ? Number(rest.rating) : 4.2 };
 
       if (rest.logoUrl) {
         let url = rest.logoUrl;
@@ -825,18 +826,20 @@ app.get('/categories', async (req, res) => {
       return idA - idB;
     });
 
-    // Map AWS S3 URLs to CloudFront CDN for category images
+        // Map AWS S3 URLs to CloudFront CDN for category images & ensure styling fields
     const mappedItems = items.map(item => {
-      if (item.imageUrl) {
-        let url = item.imageUrl;
+      let url = item.imageUrl || '';
+      if (url) {
         url = url.replace(/https:\/\/my-restaurant-buckets\.s3\.[a-z0-9-]+\.amazonaws\.com/i, 'https://d3op3va0hb427u.cloudfront.net');
         url = url.replace('my-restaurant-buckets.s3.eu-north-1.amazonaws.com', 'd3op3va0hb427u.cloudfront.net');
-        return {
-          ...item,
-          imageUrl: url
-        };
       }
-      return item;
+      return {
+        ...item,
+        imageUrl: url,
+        bgColor: item.bgColor || "rgba(0, 0, 0, 0.45)",
+        fontSize: item.fontSize ? Number(item.fontSize) : 11,
+        fontColor: item.fontColor || "#FFFFFF",
+      };
     });
 
     return res.status(200).json({ success: true, categories: mappedItems });
@@ -851,6 +854,13 @@ app.get('/carousel', async (req, res) => {
   try {
     const carouselCollection = mongoose.connection.db.collection('carousel');
     const items = await carouselCollection.find({}).toArray();
+
+    // Sort items numerically by position, carouselId, or id in ascending order (1, 2, 3, ...)
+    items.sort((a, b) => {
+      const posA = parseInt(a.position ?? a.carouselId ?? a.id ?? '999', 10);
+      const posB = parseInt(b.position ?? b.carouselId ?? b.id ?? '999', 10);
+      return (isNaN(posA) ? 999 : posA) - (isNaN(posB) ? 999 : posB);
+    });
 
     // Map AWS S3 URLs to CloudFront CDN
     const mappedItems = items.map(item => {
