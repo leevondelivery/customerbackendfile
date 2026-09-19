@@ -819,11 +819,11 @@ app.get('/categories', async (req, res) => {
     const categoriesCollection = mongoose.connection.db.collection('catagoryfilterinmainpage');
     const items = await categoriesCollection.find({}).toArray();
 
-    // Sort items numerically by 'id' field in ascending order (1, 2, 3, 4, ...)
+    // Sort items numerically by position or id in ascending order (1, 2, 3, 4, ...)
     items.sort((a, b) => {
-      const idA = parseInt(a.id || '999', 10);
-      const idB = parseInt(b.id || '999', 10);
-      return idA - idB;
+      const posA = parseInt(a.position ?? a.id ?? '999', 10);
+      const posB = parseInt(b.position ?? b.id ?? '999', 10);
+      return (isNaN(posA) ? 999 : posA) - (isNaN(posB) ? 999 : posB);
     });
 
         // Map AWS S3 URLs to CloudFront CDN for category images & ensure styling fields
