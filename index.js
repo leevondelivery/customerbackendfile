@@ -1256,23 +1256,69 @@ app.get('/restaurants/:restaurantId/menu', async (req, res) => {
 
   try {
     const db = mongoose.connection.client.db('restuarents');
-    let collectionName = restaurantIdToCollectionMap[restaurantId];
+    const sId = String(restaurantId).trim();
+    const nId = !isNaN(Number(sId)) ? Number(sId) : null;
+
+    let collectionName = restaurantIdToCollectionMap[sId] || (nId !== null ? restaurantIdToCollectionMap[nId] : null);
 
     if (!collectionName) {
       const collections = await db.listCollections().toArray();
-      for (const colInfo of collections) {
-        const col = db.collection(colInfo.name);
-        const doc = await col.findOne({
-            $or: [
-              { restaurantId: String(restaurantId) },
-              { restId: String(restaurantId) },
-              { _id: String(restaurantId) }
-            ]
-          });
-        if (doc) {
-          collectionName = colInfo.name;
-          restaurantIdToCollectionMap[restaurantId] = collectionName;
-          break;
+      const colNames = collections.map(c => c.name);
+
+      // 1. Direct name match check (O(1))
+      const exactMatch = colNames.find(name => 
+        name.toLowerCase() === sId.toLowerCase() || 
+        name.toLowerCase() === `restaurant_${sId.toLowerCase()}` ||
+        name.toLowerCase() === `rest_${sId.toLowerCase()}`
+      );
+
+      if (exactMatch) {
+        collectionName = exactMatch;
+        restaurantIdToCollectionMap[sId] = collectionName;
+        if (nId !== null) restaurantIdToCollectionMap[nId] = collectionName;
+      } else {
+        // 2. Parallel document search across all collections
+        const searchResults = await Promise.all(
+          collections.map(async (colInfo) => {
+            try {
+              const col = db.collection(colInfo.name);
+              const orConditions = [
+                { restaurantId: sId },
+                { restId: sId },
+                { _id: sId }
+              ];
+              if (nId !== null) {
+                orConditions.push({ restaurantId: nId });
+                orConditions.push({ restId: nId });
+              }
+              if (sId.length === 24) {
+                try {
+                  const { ObjectId } = require('mongodb');
+                  orConditions.push({ _id: new ObjectId(sId) });
+                  orConditions.push({ restaurantId: new ObjectId(sId) });
+                } catch (_) {}
+              }
+
+              const doc = await col.findOne({ $or: orConditions });
+              if (doc) {
+                return {
+                  name: colInfo.name,
+                  docRestaurantId: doc.restaurantId,
+                  docRestId: doc.restId
+                };
+              }
+            } catch (_) {}
+            return null;
+          })
+        );
+
+        const found = searchResults.find(Boolean);
+        if (found) {
+          collectionName = found.name;
+          restaurantIdToCollectionMap[sId] = collectionName;
+          if (nId !== null) restaurantIdToCollectionMap[nId] = collectionName;
+          if (found.docRestaurantId) restaurantIdToCollectionMap[String(found.docRestaurantId)] = collectionName;
+          if (found.docRestId) restaurantIdToCollectionMap[String(found.docRestId)] = collectionName;
         }
       }
     }
@@ -1304,7 +1350,6 @@ app.get('/restaurants/:restaurantId/menu', async (req, res) => {
     return res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
-
 
 // POST /api/coupon/validate - Validate coupon code and calculate discount
 app.post('/api/coupon/validate', async (req, res) => {
