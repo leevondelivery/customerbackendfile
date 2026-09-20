@@ -366,15 +366,15 @@ app.get('/orders/completed/user/:userId', handleGetCompletedOrders);
 
 // GET /api/controls/maintenanceMode
 // Returns the maintenanceMode status from the controls collection.
-// status: true  => app is live and running normally
-// status: false => app is under maintenance (blocks UI on the mobile app)
+// status: true  => app is under maintenance (blocks UI on the mobile app)
+// status: false => app is live and running normally
 app.get('/api/controls/maintenanceMode', async (req, res) => {
   try {
     const control = await Controls.findOne({ key: 'maintenanceMode' }).lean();
     return res.status(200).json({
       success: true,
       key: 'maintenanceMode',
-      status: control ? Boolean(control.status) : true,  // default true = app is live
+      status: control ? Boolean(control.status) : false,  // default false = app is live
       control
     });
   } catch (error) {
@@ -796,7 +796,13 @@ app.get('/restaurants', async (req, res) => {
       const restId = rest.restId;
       const categories = categoriesMap[restId] || [];
 
-      let updatedRest = { ...rest, categories, rating: (rest.rating !== undefined && rest.rating !== null) ? Number(rest.rating) : 4.2 };
+      let updatedRest = {
+        ...rest,
+        categories,
+        rating: (rest.rating !== undefined && rest.rating !== null) ? Number(rest.rating) : 4.2,
+        packagingFee: rest.packagingFee !== undefined && rest.packagingFee !== null ? Number(rest.packagingFee) : 0,
+        isPackagingFeeActive: rest.isPackagingFeeActive !== undefined ? Boolean(rest.isPackagingFeeActive) : false
+      };
 
       if (rest.logoUrl) {
         let url = rest.logoUrl;
@@ -1579,6 +1585,7 @@ app.post('/payment/verify', async (req, res) => {
       userCoordinates: userCoordinates || null,
       deliveryDistance: deliveryDistance || null,
       deliveryFee: Number(deliveryFee || 0),
+      packagingFee: Number(req.body.packagingFee !== undefined ? req.body.packagingFee : (req.body.packaging_fee || 0)),
       aa: "gg",
       orderDate: new Date(),
       __v: 0
@@ -2286,13 +2293,22 @@ app.post('/orders/review', handleSaveReview);
 // Start Server
 
 // GET /api/offers/restaurant/:id - Fetch active restaurant offers (1+1, category % discounts, tiered bill discounts)
+
+
+// GET /api/offers/restaurant/:id - Fetch active restaurant offers and packaging fee
 app.get('/api/offers/restaurant/:id', async (req, res) => {
   try {
     const restId = String(req.params.id || '').trim();
-    console.log(`[GET /api/offers/restaurant/${restId}] Fetching active restaurant offers...`);
-    let offer = await mongoose.connection.db.collection('restaurantoffers').findOne({
-      $or: [{ restId: restId }, { restId: Number(restId) }]
-    });
+    console.log(`[GET /api/offers/restaurant/${restId}] Fetching active restaurant offers and packaging fee...`);
+    let [offer, restDoc] = await Promise.all([
+      mongoose.connection.db.collection('restaurantoffers').findOne({
+        $or: [{ restId: restId }, { restId: Number(restId) }]
+      }),
+      mongoose.connection.db.collection('restuarentusers').findOne({
+        $or: [{ restId: restId }, { restId: Number(restId) }]
+      })
+    ]);
+
     if (!offer) {
       offer = {
         restId,
@@ -2301,7 +2317,11 @@ app.get('/api/offers/restaurant/:id', async (req, res) => {
         tieredDiscounts: []
       };
     }
-    console.log(`[GET /api/offers/restaurant/${restId}] Returning ${offer.tieredDiscounts?.length || 0} tiered discounts, ${offer.bogoOffers?.length || 0} BOGO offers`);
+
+    offer.packagingFee = restDoc?.packagingFee !== undefined && restDoc?.packagingFee !== null ? Number(restDoc.packagingFee) : 0;
+    offer.isPackagingFeeActive = restDoc?.isPackagingFeeActive !== undefined ? Boolean(restDoc.isPackagingFeeActive) : false;
+
+    console.log(`[GET /api/offers/restaurant/${restId}] Returning packagingFee: ${offer.packagingFee}, isPackagingFeeActive: ${offer.isPackagingFeeActive}`);
     return res.status(200).json({ success: true, data: offer });
   } catch (err) {
     console.error('Error fetching restaurant offers:', err);
@@ -2408,6 +2428,7 @@ app.post('/orders/cod', async (req, res) => {
       deliveryDistance: deliveryDistance || null,
       deliveryFee: Number(deliveryFee || 0),
       surgeFee: Number(surgeFee || 0),
+      packagingFee: Number(req.body.packagingFee !== undefined ? req.body.packagingFee : (req.body.packaging_fee || 0)),
       orderDate: new Date(),
       __v: 0
     };
