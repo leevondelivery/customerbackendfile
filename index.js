@@ -151,6 +151,8 @@ const controlsSchema = new mongoose.Schema({
   key: { type: String, required: true },
   name: { type: String },
   status: { type: Boolean, default: true },
+  title: { type: String, default: '' },
+  description: { type: String, default: '' },
   history: { type: Array, default: [] }
 }, { timestamps: true, collection: 'controls', strict: false });
 
@@ -181,6 +183,25 @@ app.get('/api/controls/confirmPayButton', async (req, res) => {
     return res.status(200).json({
       success: true,
       status: control ? Boolean(control.status) : true,
+      title: control ? (control.title || '') : '',
+      description: control ? (control.description || '') : '',
+      control
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/controls/homeHangingBanner', async (req, res) => {
+  try {
+    const control = await Controls.findOne({
+      key: { $in: ['homeHangingBanner', 'hangingBanner'] }
+    }).lean();
+    return res.status(200).json({
+      success: true,
+      status: control ? Boolean(control.status) : false,
+      title: control ? (control.title || '') : '',
+      description: control ? (control.description || '') : '',
       control
     });
   } catch (error) {
